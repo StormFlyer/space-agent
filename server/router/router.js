@@ -185,7 +185,9 @@ function createRequestHandler(options) {
           return;
         }
         handleModuleRequest(res, requestUrl.pathname, {
+          headers: req.headers,
           projectRoot,
+          requestUrl,
           username: requestContext.user.username,
           watchdog
         });

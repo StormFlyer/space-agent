@@ -1,0 +1,21 @@
+<section class="admin-panel">
+  <div class="admin-card admin-info-card">
+    <p>
+      This admin area is firmware-backed and intentionally unchangeable. Use it to recover the
+      system when layered customware breaks. For ordinary work, use standard Space Agent when your
+      permissions allow it.
+      <button class="admin-inline-link" type="button" @click="$store.adminPage.selectTab('documentation')">
+        See documentation.
+      </button>
+    </p>
+  </div>
+
+  <div class="admin-launch-grid" aria-label="Admin tools">
+    <template x-for="action in $store.adminPage.quickActions" :key="action.id">
+      <button class="admin-launch-card" type="button" @click="$store.adminPage.selectTab(action.targetTab)">
+        <x-icon x-text="action.icon"></x-icon>
+        <span x-text="action.label"></span>
+      </button>
+    </template>
+  </div>
+</section>

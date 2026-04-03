@@ -1,5 +1,5 @@
-import { createStore } from "/mod/_core/framework/AlpineStore.js";
-import { initializeRuntime } from "/mod/_core/framework/runtime.js";
+import { createStore } from "/mod/_core/framework/js/AlpineStore.js";
+import { initializeRuntime } from "/mod/_core/framework/js/runtime.js";
 import { buildPromptMessages, streamChatCompletion } from "/mod/_core/chat/api.js";
 import {
   createExecutionOutputSnapshots,

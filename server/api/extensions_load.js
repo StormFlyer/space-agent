@@ -3,6 +3,7 @@ import {
   listResolvedExtensionRequestPathGroups,
   listResolvedExtensionRequestPaths
 } from "../lib/customware/extension_overrides.js";
+import { resolveRequestMaxLayer } from "../lib/customware/layer_limit.js";
 
 function readPayload(context) {
   if (!context.body || typeof context.body !== "object" || Buffer.isBuffer(context.body)) {
@@ -92,12 +93,18 @@ function readRequestedGroups(context) {
 export function post(context) {
   const payload = readPayload(context);
   const requests = readRequestedGroups(context);
+  const maxLayer = resolveRequestMaxLayer({
+    body: payload,
+    headers: context.headers,
+    requestUrl: context.requestUrl
+  });
   const username = context.user && context.user.username;
   const watchdog = context.watchdog;
 
   if (Array.isArray(payload.requests)) {
     return {
       results: listResolvedExtensionRequestPathGroups({
+        maxLayer,
         requests,
         username,
         watchdog
@@ -107,6 +114,7 @@ export function post(context) {
 
   const patterns = requests[0]?.patterns || [];
   const extensions = listResolvedExtensionRequestPaths({
+    maxLayer,
     patterns,
     username,
     watchdog

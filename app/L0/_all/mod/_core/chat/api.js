@@ -1,6 +1,6 @@
 import { DEFAULT_CHAT_SETTINGS } from "./storage.js";
 import { buildMessageContentForApi } from "./attachments.js";
-import { buildProxyUrl, isProxyableExternalUrl } from "/mod/_core/framework/proxy-url.js";
+import { buildProxyUrl, isProxyableExternalUrl } from "/mod/_core/framework/js/proxy-url.js";
 import { parseLlmParamsText } from "./llm-params.js";
 
 function createHeaders(endpoint, apiKey) {

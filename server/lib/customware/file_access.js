@@ -16,6 +16,28 @@ function stripTrailingSlash(value) {
   return text.endsWith("/") ? text.slice(0, -1) : text;
 }
 
+function resolveUserShorthandPath(inputPath, username) {
+  const rawPath = String(inputPath || "").trim();
+
+  if (!rawPath.startsWith("~")) {
+    return rawPath;
+  }
+
+  if (!username) {
+    throw createHttpError("User-relative paths require an authenticated user.", 400);
+  }
+
+  if (rawPath === "~") {
+    return `L2/${username}/`;
+  }
+
+  if (rawPath.startsWith("~/")) {
+    return `L2/${username}/${rawPath.slice(2)}`;
+  }
+
+  throw createHttpError(`Invalid user-relative path: ${rawPath}`, 400);
+}
+
 function toAppRelativePath(projectPath) {
   const normalizedProjectPath = normalizeAppProjectPath(projectPath, {
     allowAppRoot: true,
@@ -303,7 +325,10 @@ function readAppFile(options = {}) {
     groupIndex: getGroupIndex(options.watchdog),
     username: options.username
   });
-  const resolvedPath = resolveExistingProjectPath(pathIndex, options.path);
+  const resolvedPath = resolveExistingProjectPath(
+    pathIndex,
+    resolveUserShorthandPath(options.path, accessController.username)
+  );
 
   if (!resolvedPath.projectPath || !resolvedPath.exists) {
     throw createHttpError("File not found.", 404);
@@ -327,7 +352,9 @@ function readAppFile(options = {}) {
 
 function writeAppFile(options = {}) {
   const projectRoot = String(options.projectRoot || "");
-  const normalizedProjectPath = normalizeAppProjectPath(options.path);
+  const normalizedProjectPath = normalizeAppProjectPath(
+    resolveUserShorthandPath(options.path, normalizeEntityId(options.username))
+  );
 
   if (!normalizedProjectPath || normalizedProjectPath.endsWith("/")) {
     throw createHttpError("Expected a writable file path.", 400);
@@ -406,7 +433,10 @@ function listAppPaths(options = {}) {
     groupIndex: getGroupIndex(options.watchdog),
     username: options.username
   });
-  const resolvedPath = resolveExistingProjectPath(pathIndex, options.path || "/app/");
+  const resolvedPath = resolveExistingProjectPath(
+    pathIndex,
+    resolveUserShorthandPath(options.path || "/app/", accessController.username)
+  );
 
   if (!resolvedPath.projectPath || !resolvedPath.exists) {
     throw createHttpError("Path not found.", 404);

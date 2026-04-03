@@ -25,7 +25,7 @@ function matchesExtensionPattern(entry, compiledPatterns) {
 }
 
 function listResolvedExtensionRequestPathGroups(options = {}) {
-  const { requests = [], username, watchdog } = options;
+  const { maxLayer, requests = [], username, watchdog } = options;
 
   if (!watchdog || typeof watchdog.getPaths !== "function") {
     return Object.create(null);
@@ -55,6 +55,7 @@ function listResolvedExtensionRequestPathGroups(options = {}) {
 
   const accessibleEntries = collectAccessibleModuleEntries(watchdog.getPaths(), {
     groupIndex: typeof watchdog.getIndex === "function" ? watchdog.getIndex("group_index") : null,
+    maxLayer,
     parseProjectPath: parseProjectModuleExtensionFilePath,
     username
   });
@@ -85,8 +86,9 @@ function listResolvedExtensionRequestPathGroups(options = {}) {
 }
 
 function listResolvedExtensionRequestPaths(options = {}) {
-  const { patterns = [], username, watchdog } = options;
+  const { maxLayer, patterns = [], username, watchdog } = options;
   const results = listResolvedExtensionRequestPathGroups({
+    maxLayer,
     requests: [
       {
         key: "default",

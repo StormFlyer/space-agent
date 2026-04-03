@@ -25,8 +25,8 @@ Current server layout:
 - `server/config.js`: default host, port, and filesystem roots
 - `server/dev_server.js`: source-checkout dev supervisor used by `npm run dev`
 - `server/package.json`: ES module package boundary for the backend
-- `server/pages/`: root HTML shell files served at `/`, `/login`, and `/admin`, plus public page-shell assets under `server/pages/res/` served from `/pages/res/...`
-- `server/api/`: endpoint modules loaded by endpoint name, with multiword routes named object-first such as `login_check`, `guest_create`, and `extensions_load`
+- `server/pages/`: root HTML shell files served at `/`, `/login`, and `/admin`, plus optional public shell assets under `server/pages/res/`
+- `server/api/`: endpoint modules loaded by endpoint name, with multiword routes named object-first such as `file_read`, `login_check`, and `extensions_load`
 - `server/router/router.js`: top-level request routing order and API dispatch
 - `server/router/pages_handler.js`: page-route handler for page auth gating, redirects, and page actions such as `/logout`
 - `server/router/mod_handler.js`: `/mod/...` static module resolution and file serving
@@ -36,10 +36,10 @@ Current server layout:
 - `server/router/responses.js`: shared response writers for JSON, redirects, file responses, and API result serialization
 - `server/router/proxy.js`: outbound fetch proxy transport used by `/api/proxy`
 - `server/lib/api/registry.js`: API module discovery
-- `server/lib/auth/`: password verifier, login session, user file, and auth service helpers
+- `server/lib/auth/`: password verifier, session, user file, and auth service helpers
 - `server/lib/utils/`: shared low-level utilities such as app-path normalization and lightweight YAML helpers
 - `server/lib/customware/`: layout parsing, group index building, and module inheritance resolution
-- `server/lib/customware/file_access.js`: reusable normalized app-path permission checks plus index-backed `file_read`, `file_write`, `file_list`, and pattern-based `file_paths` helper operations
+- `server/lib/customware/file_access.js`: reusable normalized app-path permission checks plus index-backed `file_read`, `file_write`, `file_list`, and pattern-based `file_paths` helper operations, including `~` path expansion for authenticated user-relative list, read, and write paths
 - `server/lib/file_watch/config.yaml`: declarative watched-file handler configuration
 - `server/lib/file_watch/handlers/`: watchdog handler classes such as `path_index`, `group_index`, and `user_index`, loaded by name from config
 - `server/lib/file_watch/watchdog.js`: reusable filesystem watchdog that dispatches matching change events to handlers and exposes handler indexes
@@ -49,15 +49,16 @@ Current server layout:
 
 - request routing order is: API preflight handling, `/api/proxy`, `/api/<endpoint>`, `/mod/...`, then pages as the last fallback
 - non-`/mod` and non-`/api` requests stay limited to root HTML shells and page actions owned by the pages layer
-- the router-side pages handler owns page auth gating and page-route actions: unauthenticated requests for protected pages redirect to `/login`, authenticated requests to `/login` redirect to `/`, and `/logout` clears the current session then redirects to `/login`
-- public page-shell assets under `/pages/res/...` are served directly from `server/pages/res/` without authentication so pre-auth shells such as `/login` can load shell-local artwork
-- `/mod/...` requests resolve through the layered customware model, using the watched `path_index` plus the group index to select the best accessible match from `L0`, `L1`, and `L2`
-- request identity is now derived from the server-issued `space_session` cookie via the router-side `request_context` helper and the watched `user_index`
+- the router-side pages handler owns page auth gating, page-route redirects, and page actions such as `/logout`
+- public page-shell assets under `/pages/res/...` are served directly from `server/pages/res/` without authentication when public shells need them
+- the authenticated page shells at `/` and `/admin` currently load shared framework styles from `/mod/_core/framework/css/` and bootstrap the browser runtime from `/mod/_core/framework/js/initFw.js`; `/` stays a minimal shell for the injected chat module, while `/admin` keeps its simpler dark shell and pins framework asset requests with `maxLayer=0`
+- `/mod/...` requests resolve through the layered customware model, using the watched `path_index` plus the group index to select the best accessible match from `L0`, `L1`, and `L2`, and they accept a `maxLayer` ceiling query parameter that defaults to `2`
+- request identity is derived from the server-issued `space_session` cookie via the router-side `request_context` helper and the watched `user_index`
 - `app/L2/<username>/user.yaml` stores user metadata such as `full_name`; auth state lives under `app/L2/<username>/meta/`, where `password.json` stores the password verifier and `logins.json` stores active session codes
-- only explicit public endpoints such as login status, login challenge, login completion, and health may run without authentication; other APIs and `/mod/...` fetches must require a valid session
+- only explicit public endpoints related to authentication or health may run without authentication; other APIs and `/mod/...` fetches must require a valid session
 - root page shells are pretty-routed as `/`, `/login`, and `/admin`; legacy `.html` requests redirect to those routes
 - page-shell assets keep their explicit `/pages/res/...` paths and are not pretty-routed
-- app filesystem APIs use app-rooted paths like `L2/alice/user.yaml` or `/app/L2/alice/user.yaml`
+- app filesystem APIs use app-rooted paths like `L2/alice/user.yaml` or `/app/L2/alice/user.yaml`; `file_read`, `file_write`, and `file_list` also accept `~` or `~/...` for the authenticated user's `L2/<username>/...`
 - read permissions are: own `L2/<username>/`, plus `L0/<group>/` and `L1/<group>/` for groups the user belongs to
 - write permissions are: own `L2/<username>/`; managed `L1/<group>/`; `_admin` members may write any `L1/` and `L2/`; nobody writes `L0/`
 - watchdog infrastructure is config-driven
@@ -109,7 +110,6 @@ Handlers may return:
 
 Current endpoint set:
 
-- `db`
 - `extensions_load`
 - `file_list`
 - `file_paths`
@@ -120,22 +120,25 @@ Current endpoint set:
 - `login`
 - `login_challenge`
 - `login_check`
+- `user_self_info`
 
 Current status notes:
 
-- `db` is a placeholder route family for future persistence work
 - `guest_create`, `login`, `login_challenge`, and `login_check` are the current public auth-related endpoints
-- `login` enforces a 500 ms minimum response time on both success and failure so authentication outcome is not reflected as an immediate timing difference
-- `guest_create` creates a temporary L2 guest user with generated credentials, refreshes the watchdog indexes, and leaves the actual login step to the normal frontend login flow, which now reuses the primary login fields to display those credentials before continuing
+- `guest_create` creates a guest L2 user, refreshes the relevant indexes, and leaves authentication to the standard session flow
 - `file_read`, `file_write`, and `file_list` are the current authenticated app-filesystem APIs; they operate on app-rooted paths through the shared `file_access` library, use watchdog-backed indexes for path resolution and permission decisions, and should remain the reusable contract for agent-oriented file access
+- `file_read`, `file_write`, and `file_list` expand `~` or `~/...` to the authenticated user's `L2/<username>/...` path before normal app-path validation and permission checks
 - `file_paths` is the authenticated hierarchy-pattern lookup API; it matches owner-relative glob patterns such as `skills/SKILL.md` across the user's readable `L0`, `L1`, and `L2` roots and returns matched full paths relative to `/app`, while preserving hierarchy order and allowing directory patterns that end with `/`
+- `user_self_info` returns the authenticated user's derived identity snapshot: `username`, `fullName`, membership groups, and managed groups, using the watched `user_index` and `group_index`
 - the current page shells live in `server/pages/`, while all page-serving logic stays in `server/router/pages_handler.js`
-- public shell artwork or other shell-local binaries should live under `server/pages/res/` and load through `/pages/res/...` rather than being inlined into large data URIs in HTML; the login intro mascot in the two-column hero is the current reference example
-- the public `/login` shell currently renders its backdrop as a static gradient/glow background plus drifting CSS star layers and lightweight randomized shooting-star launches, omits the old in-panel `Sign in` heading, visually prioritizes the guest-account action over direct sign-in, and now offers a public `Run it yourself` GitHub link below the guest-account path, and its intro lets the `Space Agent` title and astronaut mascot float independently with randomized motion driven by explicit text tuning params for movement distance/speed and rotation distance/speed while the astronaut derives those values at `1.5x` and the motto line stays anchored; login-button hover feedback should stay visual-only so the hitboxes do not shift under the pointer; keep distant star layers cheap, keep halo treatments limited to the near two layers, and avoid pointer-driven per-frame style updates in that shell
+- public shell artwork or other shell-local binaries should live under `server/pages/res/` and load through `/pages/res/...` rather than being inlined into large data URIs in HTML
 - page shells under `server/pages/` should stay minimal and expose stable extension anchors when the frontend runtime should compose content dynamically; do not hardwire module components there when the `mod/**/ext/**` loader can own the composition instead
-- public page shells such as `/login` should not depend on authenticated `/mod/...` assets; when they need design tokens or the shared space backdrop before login, mirror the semantic names from `app/L0/_all/mod/_core/framework/colors.css` and the same shared backdrop recipe from `app/L0/_all/mod/_core/framework/visual.css` locally and keep them aligned with `/app/AGENTS.md`
+- public page shells such as `/login` should not depend on authenticated `/mod/...` assets; keep any pre-auth shell styling or assets local and aligned with `/app/AGENTS.md`
+- `/admin` declares `space-max-layer=0`, and server-side module resolution honors that ceiling through explicit `maxLayer` request data plus admin-origin request fallback for browser-native `/mod/...` loads
 - `extensions_load` resolves extension files from layered `mod/**/ext/**` paths using the current user's group inheritance and exact module-path overrides
+- `extensions_load` accepts a top-level `maxLayer` integer in the request body, defaults to `2`, and applies that ceiling before extension override selection
 - `extensions_load` also accepts grouped request batches so the frontend can debounce uncached extension discovery to one request per frame while the server resolves all requested pattern groups in one inheritance pass
+- `maxLayer` only constrains module and extension resolution; app file APIs such as `file_read`, `file_write`, and `file_list` continue to use their normal permission model across writable layers
 
 ## Server Implementation Guide
 

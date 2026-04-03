@@ -58,7 +58,7 @@
         min-height: 100%;
       }
 
-      /* Mirrors /mod/_core/framework/visual.css for the public login shell. */
+      /* Mirrors /mod/_core/framework/css/visual.css for the public login shell. */
       body.space-theme-canvas {
         margin: 0;
         min-height: 100vh;
@@ -546,7 +546,11 @@
         min-height: calc(0.88rem * 2 + 1rem);
         padding: 0.88rem 1rem;
         border-radius: var(--radius-control);
-        color: var(--color-text-primary);
+        color: #ffffff;
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.4;
+        text-align: center;
         text-decoration: none;
         background: rgba(255, 255, 255, 0.02);
         border: 1px solid rgba(148, 167, 201, 0.12);
@@ -589,10 +593,16 @@
       }
 
       .field-note {
-        margin: -0.15rem 0 0;
-        color: var(--color-text-tertiary);
-        font-size: 0.9rem;
+        margin: 0.45rem 0 0.95rem;
+        color: #ffffff;
+        font-size: 1rem;
+        font-weight: 500;
         line-height: 1.5;
+      }
+
+      .field-note-secondary {
+        display: block;
+        margin-top: 0.4rem;
       }
 
       .status {
@@ -721,7 +731,8 @@
           </div>
         </div>
         <p class="intro-copy">
-          AI agent that builds your space,<br />
+          Free and open-source AI agent<br />
+          that builds your space,<br />
           right in the browser.
         </p>
       </section>
@@ -743,13 +754,16 @@
             />
           </label>
           <p id="field-note" class="field-note" hidden>
-            Guest account ready, save your credentials!
+            Guest account ready, save your credentials.
+            <span class="field-note-secondary">
+              Guest accounts are temporary and may be removed any time.
+            </span>
           </p>
           <button id="submit-button" class="secondary-button" type="submit">Enter your Space</button>
         </form>
         <div id="login-separator" class="login-separator">or</div>
         <button id="guest-create-button" class="primary-button" type="button">
-          Create Temporary Guest Account
+          Use Guest Account
         </button>
         <div class="login-separator">or</div>
         <a
@@ -758,7 +772,7 @@
           target="_blank"
           rel="noreferrer"
         >
-          Run it yourself
+          Run it yourself for privacy and control
         </a>
         <div id="status" class="status" role="status" aria-live="polite"></div>
       </section>
@@ -1247,6 +1261,8 @@
         passwordInput.readOnly = isGuestReady;
         passwordInput.type = isGuestReady ? "text" : "password";
         submitButton.textContent = isGuestReady ? "Continue" : "Enter your Space";
+        submitButton.classList.toggle("primary-button", isGuestReady);
+        submitButton.classList.toggle("secondary-button", !isGuestReady);
         fieldNote.hidden = !isGuestReady;
         loginSeparator.hidden = isGuestReady;
         guestCreateButton.hidden = isGuestReady;

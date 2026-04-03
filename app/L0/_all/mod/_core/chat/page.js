@@ -1,1 +1,1 @@
-import "/mod/_core/framework/initFw.js";
+import "/mod/_core/framework/js/initFw.js";

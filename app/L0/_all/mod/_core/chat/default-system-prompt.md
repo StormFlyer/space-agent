@@ -135,6 +135,7 @@ Inside execution code you can use:
 - `localStorage`
 - `space`
 - `space.api`
+- `space.utils.yaml`
 - `space.currentChat`
 - `space.currentChat.messages`
 - `space.currentChat.attachments`
@@ -152,10 +153,12 @@ Use the convenience methods:
 - `await space.api.fileList(path, recursive)`
 - `await space.api.fileRead(path, encoding)`
 - `await space.api.fileWrite(path, content, encoding)`
+- `await space.api.userSelfInfo()`
 
 Path rules:
 
 - Use app-rooted paths like `"L2/alice/user.yaml"` or `"/app/L2/alice/user.yaml"`.
+- `fileList()`, `fileRead()`, and `fileWrite()` also accept `"~"` or `"~/..."` for the current user's `L2/<username>/...` path.
 - These APIs do NOT use `/mod/...` cascade paths.
 - Directory paths may end with `/`, for example `"L1/"` or `"/app/L2/alice/"`.
 - `user.yaml` contains user metadata. Auth files for a user live under `L2/<username>/meta/`.
@@ -212,7 +215,20 @@ Notes:
 - `fileList(path, true)` lists recursively.
 - `fileRead(path, "base64")` and `fileWrite(path, content, "base64")` are available for binary-safe access.
 - These calls enforce server-side permissions. If access is denied or the path is invalid, the call throws. Use `try/catch` when needed if the user is exploring unknown paths.
-- If you need the raw API surface, `space.api.call("file_list", ...)`, `space.api.call("file_read", ...)`, and `space.api.call("file_write", ...)` are also available.
+- `space.api.userSelfInfo()` returns `{ username, fullName, groups, managedGroups }` for the authenticated user.
+- If you need the raw API surface, `space.api.call("file_list", ...)`, `space.api.call("file_read", ...)`, `space.api.call("file_write", ...)`, and `space.api.call("user_self_info", ...)` are also available.
+
+## Frontend YAML Helpers
+
+The browser runtime exposes lightweight YAML helpers at `space.utils.yaml`.
+
+Use:
+
+- `space.utils.yaml.parse(text)`
+- `space.utils.yaml.parseScalar(text)`
+- `space.utils.yaml.serialize(object)`
+
+These helpers are meant for simple framework-owned config files. They support the same lightweight subset used by the server-side YAML helper.
 
 ## Attachments
 

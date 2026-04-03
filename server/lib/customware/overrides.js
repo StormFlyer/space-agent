@@ -1,3 +1,8 @@
+import {
+  getLayerOrder,
+  isProjectPathWithinMaxLayer,
+  normalizeMaxLayer
+} from "./layer_limit.js";
 import { normalizeEntityId, parseProjectModuleFilePath } from "./layout.js";
 
 function createEmptyGroupIndex() {
@@ -26,7 +31,8 @@ function compareRankedEntries(left, right) {
   return left.projectPath.localeCompare(right.projectPath);
 }
 
-function buildInheritanceRanks(groupIndex, username) {
+function buildInheritanceRanks(groupIndex, username, options = {}) {
+  const maxLayer = normalizeMaxLayer(options.maxLayer);
   const normalizedUsername = normalizeEntityId(username);
   const orderedGroups =
     groupIndex && typeof groupIndex.getOrderedGroupsForUser === "function"
@@ -41,6 +47,12 @@ function buildInheritanceRanks(groupIndex, username) {
   return {
     getRankForModulePath(modulePathInfo) {
       if (!modulePathInfo) {
+        return null;
+      }
+
+      const layerOrder = getLayerOrder(modulePathInfo.layer);
+
+      if (layerOrder === null || layerOrder > maxLayer) {
         return null;
       }
 
@@ -73,10 +85,18 @@ function buildInheritanceRanks(groupIndex, username) {
 }
 
 function collectAccessibleModuleEntries(projectPaths, options = {}) {
-  const { groupIndex, parseProjectPath = parseProjectModuleFilePath, username } = options;
-  const ranks = buildInheritanceRanks(groupIndex || createEmptyGroupIndex(), username);
+  const {
+    groupIndex,
+    maxLayer,
+    parseProjectPath = parseProjectModuleFilePath,
+    username
+  } = options;
+  const ranks = buildInheritanceRanks(groupIndex || createEmptyGroupIndex(), username, {
+    maxLayer
+  });
 
   return [...projectPaths]
+    .filter((projectPath) => isProjectPathWithinMaxLayer(projectPath, maxLayer))
     .map((projectPath) => {
       const parsedEntry = parseProjectPath(projectPath);
 
@@ -116,9 +136,10 @@ function selectOverrideEntries(entries, options = {}) {
   return [...selectedEntries.values()].sort(compareRankedEntries);
 }
 
-function filterAccessibleModulePaths(projectPaths, username, groupIndex) {
+function filterAccessibleModulePaths(projectPaths, username, groupIndex, options = {}) {
   return collectAccessibleModuleEntries(projectPaths, {
     groupIndex,
+    maxLayer: options.maxLayer,
     username
   }).map((entry) => entry.projectPath);
 }

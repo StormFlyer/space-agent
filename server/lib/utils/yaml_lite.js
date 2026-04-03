@@ -69,10 +69,15 @@ function parseYamlScalar(value) {
     return "";
   }
 
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1);
   }
 

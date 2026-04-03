@@ -614,8 +614,9 @@ function restoreScrollSnapshot(element, snapshot, options = {}) {
 }
 
 function captureThreadScrollSnapshots(thread, options = {}) {
+  const scroller = getDocumentScroller();
   const snapshots = {
-    document: createScrollSnapshot(getDocumentScroller(), {
+    document: createScrollSnapshot(scroller, {
       forcePreserve: options.preserveScroll === true
     }),
     nodes: new Map()
@@ -629,7 +630,9 @@ function captureThreadScrollSnapshots(thread, options = {}) {
 }
 
 function restoreThreadScrollSnapshots(thread, snapshots, options = {}) {
-  restoreScrollSnapshot(getDocumentScroller(), snapshots?.document, {
+  const scroller = getDocumentScroller();
+
+  restoreScrollSnapshot(scroller, snapshots?.document, {
     forcePreserve: options.preserveScroll === true
   });
 

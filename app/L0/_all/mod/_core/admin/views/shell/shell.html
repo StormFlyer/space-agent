@@ -1,0 +1,104 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="/mod/_core/admin/views/shell/shell.css" />
+    <script type="module" src="/mod/_core/admin/views/shell/shell.js"></script>
+    <script type="module" src="/mod/_core/admin/views/shell/page.js"></script>
+  </head>
+  <body>
+    <div x-data>
+      <template x-if="$store.adminShell && $store.adminPage">
+        <div
+          class="admin-shell"
+          x-cloak
+          x-init="$nextTick(() => { $store.adminShell.mount({ mainFrame: $refs.mainFrame }); $store.adminPage.mount({ tabBar: $refs.tabBar }); })"
+          x-destroy="$store.adminPage.unmount(); $store.adminShell.unmount()"
+          @pointermove.window="$store.adminShell.handlePointerMove($event)"
+          @pointerup.window="$store.adminShell.stopDrag($event)"
+          @pointercancel.window="$store.adminShell.stopDrag($event)"
+        >
+          <aside class="pane admin-pane" aria-label="Admin panel">
+            <main class="admin-pane-content">
+              <div class="admin-page">
+                <header class="admin-topbar" x-ref="tabBar" role="tablist" aria-label="Admin navigation">
+                  <template x-for="tab in $store.adminPage.tabs" :key="tab.id">
+                    <button
+                      :id="`admin-tab-${tab.id}`"
+                      class="admin-tab-button"
+                      :class="{ 'is-active': $store.adminPage.isTabActive(tab.id) }"
+                      :data-tab-id="tab.id"
+                      :aria-label="tab.label"
+                      :aria-selected="String($store.adminPage.isTabActive(tab.id))"
+                      :tabindex="$store.adminPage.isTabActive(tab.id) ? 0 : -1"
+                      :title="tab.label"
+                      type="button"
+                      role="tab"
+                      :aria-controls="`admin-panel-${tab.id}`"
+                      @click="$store.adminPage.selectTab(tab.id)"
+                      @keydown="$store.adminPage.handleTabKeydown($event, tab.id)"
+                    >
+                      <x-icon x-text="tab.icon"></x-icon>
+                      <span class="admin-tab-label" x-text="tab.label"></span>
+                    </button>
+                  </template>
+                </header>
+
+                <div class="admin-stage">
+                  <section
+                    id="admin-panel-dashboard"
+                    class="admin-panel-shell"
+                    x-show="$store.adminPage.isTabActive('dashboard')"
+                    x-cloak
+                    role="tabpanel"
+                    aria-labelledby="admin-tab-dashboard"
+                  >
+                    <x-component path="/mod/_core/admin/views/dashboard/panel.html"></x-component>
+                  </section>
+
+                  <section
+                    id="admin-panel-agent"
+                    class="admin-panel-shell admin-panel-shell-agent"
+                    x-show="$store.adminPage.isTabActive('agent')"
+                    x-cloak
+                    role="tabpanel"
+                    aria-labelledby="admin-tab-agent"
+                  >
+                    <x-component path="/mod/_core/admin/views/agent/panel.html"></x-component>
+                  </section>
+
+                  <section
+                    id="admin-panel-documentation"
+                    class="admin-panel-shell"
+                    x-show="$store.adminPage.isTabActive('documentation')"
+                    x-cloak
+                    role="tabpanel"
+                    aria-labelledby="admin-tab-documentation"
+                  >
+                    <x-component path="/mod/_core/admin/views/documentation/panel.html"></x-component>
+                  </section>
+                </div>
+              </div>
+            </main>
+          </aside>
+
+          <div class="divider">
+            <button
+              class="divider-handle"
+              type="button"
+              aria-label="Resize split view"
+              title="Drag to resize panels"
+              @pointerdown="$store.adminShell.startDrag($event)"
+              @keydown.left.prevent="$store.adminShell.nudge(-32)"
+              @keydown.right.prevent="$store.adminShell.nudge(32)"
+              @keydown.up.prevent="$store.adminShell.nudge(-32)"
+              @keydown.down.prevent="$store.adminShell.nudge(32)"
+            ></button>
+          </div>
+
+          <section class="pane main-pane" aria-label="Main application">
+            <iframe x-ref="mainFrame" class="main-frame" title="Space Agent main app" src="/index.html"></iframe>
+          </section>
+        </div>
+      </template>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,214 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="/mod/_core/admin/views/agent/agent.css" />
+    <script type="module" src="/mod/_core/admin/views/agent/store.js"></script>
+  </head>
+  <body>
+    <div x-data class="admin-agent-root">
+      <template x-if="$store.adminAgent">
+        <section
+          class="admin-agent-surface"
+          x-cloak
+          x-init="$nextTick(() => $store.adminAgent.mount({ historyDialog: $refs.historyDialog, input: $refs.input, rawDialog: $refs.rawDialog, scroller: $refs.scroller, settingsDialog: $refs.settingsDialog, systemDialog: $refs.systemDialog, thread: $refs.thread }))"
+          x-destroy="$store.adminAgent.unmount()"
+        >
+          <header class="admin-agent-toolbar">
+            <section class="admin-agent-meta" aria-label="Admin agent options">
+              <button type="button" class="chat-option chat-option-llm" @click="$store.adminAgent.openSettingsDialog()">
+                <span class="chat-option-label">LLM</span>
+                <span class="chat-option-value" x-text="$store.adminAgent.llmSummary"></span>
+                <x-icon>edit</x-icon>
+              </button>
+              <button type="button" class="chat-option chat-option-prompt" @click="$store.adminAgent.openSystemDialog()">
+                <span class="chat-option-label">Prompt</span>
+                <span class="chat-option-value" x-text="$store.adminAgent.promptSummary"></span>
+                <x-icon>edit</x-icon>
+              </button>
+            </section>
+
+            <div class="admin-agent-toolbar-actions">
+              <button type="button" class="secondary-button chat-history-button" @click="$store.adminAgent.openPromptHistoryDialog()">
+                History
+              </button>
+              <button type="button" class="secondary-button danger chat-clear-button" @click="$store.adminAgent.handleClearClick()">
+                Clear
+              </button>
+            </div>
+          </header>
+
+          <section class="admin-agent-thread-wrap" x-ref="scroller">
+            <div class="chat-thread" x-ref="thread" data-chat-thread @click="$store.adminAgent.handleThreadClick($event)"></div>
+          </section>
+
+          <footer class="admin-agent-composer-wrap">
+            <form class="chat-composer" @submit.prevent="$store.adminAgent.submitMessage()">
+              <textarea
+                x-ref="input"
+                x-create="$nextTick(() => $el.focus({ preventScroll: true }))"
+                name="message"
+                rows="1"
+                aria-label="Message Admin agent"
+                :placeholder="$store.adminAgent.composerPlaceholder"
+                x-model="$store.adminAgent.draft"
+                :disabled="$store.adminAgent.isComposerInputDisabled"
+                @input="$store.adminAgent.handleDraftInput($event)"
+                @keydown="$store.adminAgent.handleComposerKeydown($event)"
+              ></textarea>
+              <div class="chat-composer-actions">
+                <span class="composer-hint">Enter to send, Shift+Enter for newline</span>
+                <button
+                  type="submit"
+                  class="primary-button"
+                  :disabled="$store.adminAgent.isComposerSubmitDisabled"
+                >
+                  Send
+                </button>
+              </div>
+            </form>
+          </footer>
+
+          <dialog class="chat-dialog" x-ref="systemDialog" @cancel.prevent="$store.adminAgent.closeSystemDialog()">
+            <form method="dialog" class="dialog-card" @submit.prevent="$store.adminAgent.saveSystemPromptFromDialog()">
+              <header class="dialog-header">
+                <div>
+                  <p class="page-eyebrow">System Prompt</p>
+                  <h2>Edit admin agent instructions</h2>
+                </div>
+              </header>
+              <label class="field">
+                <span>Prompt</span>
+                <textarea rows="12" x-model="$store.adminAgent.systemPromptDraft"></textarea>
+              </label>
+              <div class="dialog-actions">
+                <button
+                  type="button"
+                  class="secondary-button"
+                  :disabled="$store.adminAgent.isLoadingDefaultSystemPrompt"
+                  @click="$store.adminAgent.loadDefaultSystemPromptIntoEditor()"
+                >
+                  Default
+                </button>
+                <button type="button" class="secondary-button" @click="$store.adminAgent.closeSystemDialog()">Cancel</button>
+                <button type="submit" class="primary-button">Save Prompt</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog class="chat-dialog" x-ref="settingsDialog" @cancel.prevent="$store.adminAgent.closeSettingsDialog()">
+            <form method="dialog" class="dialog-card" @submit.prevent="$store.adminAgent.saveSettingsFromDialog()">
+              <header class="dialog-header">
+                <div>
+                  <p class="page-eyebrow">LLM</p>
+                  <h2>Provider, model, credentials, and params</h2>
+                </div>
+              </header>
+              <label class="field">
+                <span>Provider API Endpoint URL</span>
+                <input type="url" x-model="$store.adminAgent.settingsDraft.apiEndpoint" />
+              </label>
+              <label class="field">
+                <span>Model Name</span>
+                <input type="text" x-model="$store.adminAgent.settingsDraft.model" />
+              </label>
+              <label class="field">
+                <span>API Key</span>
+                <input type="password" x-model="$store.adminAgent.settingsDraft.apiKey" />
+              </label>
+              <label class="field">
+                <span>Params</span>
+                <textarea
+                  rows="6"
+                  spellcheck="false"
+                  placeholder="temperature:0.2"
+                  x-model="$store.adminAgent.settingsDraft.paramsText"
+                ></textarea>
+                <p class="field-note">
+                  YAML format. Example: <code>temperature:0.2</code>
+                </p>
+              </label>
+              <p class="dialog-note">
+                These values are stored in <code>~/conf/admin-chat.yaml</code>.
+              </p>
+              <div class="dialog-actions">
+                <button type="button" class="secondary-button" @click="$store.adminAgent.closeSettingsDialog()">Cancel</button>
+                <button type="submit" class="primary-button">Save Settings</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog class="chat-dialog" x-ref="rawDialog" @cancel.prevent="$store.adminAgent.closeRawDialog()">
+            <div class="dialog-card dialog-card-raw">
+              <header class="dialog-header">
+                <div>
+                  <p class="page-eyebrow">LLM Output</p>
+                  <h2 x-text="$store.adminAgent.rawOutputTitle"></h2>
+                </div>
+              </header>
+              <div class="raw-output-frame">
+                <pre class="raw-output" x-text="$store.adminAgent.rawOutputContent || '[No raw output available]'"></pre>
+              </div>
+              <div class="dialog-actions">
+                <button type="button" class="secondary-button" @click="$store.adminAgent.closeRawDialog()">Close</button>
+              </div>
+            </div>
+          </dialog>
+
+          <dialog class="chat-dialog" x-ref="historyDialog" @cancel.prevent="$store.adminAgent.closePromptHistoryDialog()">
+            <div class="dialog-card dialog-card-raw">
+              <header class="dialog-header">
+                <div>
+                  <p class="page-eyebrow">Prompt History</p>
+                  <h2 x-text="$store.adminAgent.promptHistoryTitle"></h2>
+                </div>
+                <div class="dialog-header-actions">
+                  <div class="dialog-segmented-control" role="tablist" aria-label="Prompt history mode">
+                    <button
+                      type="button"
+                      class="secondary-button dialog-segmented-button"
+                      :class="{ 'is-active': $store.adminAgent.promptHistoryMode === 'text' }"
+                      @click="$store.adminAgent.setPromptHistoryMode('text')"
+                    >
+                      Text
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button dialog-segmented-button"
+                      :class="{ 'is-active': $store.adminAgent.promptHistoryMode === 'json' }"
+                      @click="$store.adminAgent.setPromptHistoryMode('json')"
+                    >
+                      JSON
+                    </button>
+                  </div>
+                  <button type="button" class="secondary-button" @click="$store.adminAgent.copyPromptHistory()">
+                    Copy
+                  </button>
+                </div>
+              </header>
+              <div class="raw-output-frame">
+                <template x-if="$store.adminAgent.promptHistoryMode === 'text'">
+                  <div class="prompt-history-list">
+                    <template x-if="!$store.adminAgent.promptHistorySections.length">
+                      <pre class="raw-output"></pre>
+                    </template>
+                    <template x-for="(section, index) in $store.adminAgent.promptHistorySections" :key="`${section.role}-${index}`">
+                      <section class="prompt-history-section">
+                        <div class="prompt-history-role" x-text="`${section.role}:`"></div>
+                        <pre class="prompt-history-body" x-text="section.content"></pre>
+                      </section>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="$store.adminAgent.promptHistoryMode === 'json'">
+                  <pre class="raw-output" x-text="$store.adminAgent.promptHistoryContent || '[]'"></pre>
+                </template>
+              </div>
+              <div class="dialog-actions">
+                <button type="button" class="secondary-button" @click="$store.adminAgent.closePromptHistoryDialog()">Close</button>
+              </div>
+            </div>
+          </dialog>
+        </section>
+      </template>
+    </div>
+  </body>
+</html>

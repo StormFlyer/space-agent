@@ -1,4 +1,4 @@
-import { createStore } from "/mod/_core/framework/AlpineStore.js";
+import { createStore } from "/mod/_core/framework/js/AlpineStore.js";
 
 // define the model object holding data and functions
 const model = {
