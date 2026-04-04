@@ -122,6 +122,9 @@ const syncCurrentRoute = globalThis.space.extend(
     store.error = "";
     store.loading = true;
     store.current = route;
+    if (store.refs.stageInner) {
+      store.refs.stageInner.dataset.routePath = route.path;
+    }
 
     try {
       await loadRouteComponent(store, route, loadId);
@@ -140,6 +143,10 @@ const syncCurrentRoute = globalThis.space.extend(
         return;
       }
 
+      console.error("[router] route load failed", {
+        error,
+        route
+      });
       store.error = error instanceof Error ? error.message : String(error || "Unknown route error");
       store.renderRouteError(route, store.error);
       await restoreRouteScrollPosition(store, route.key, { mode: "top" });
@@ -279,6 +286,11 @@ const model = {
 
     this.handleHashChangeBound = null;
     this.handlePageHideBound = null;
+
+    if (this.refs.stageInner) {
+      delete this.refs.stageInner.dataset.routePath;
+    }
+
     this.refs = {};
   },
 

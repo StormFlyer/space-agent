@@ -16,8 +16,10 @@ Documentation is top priority for this area. After any change under `app/` or an
 
 Current module-local docs in the app tree:
 
+- `app/L0/_all/mod/_core/dashboard/AGENTS.md`
 - `app/L0/_all/mod/_core/framework/AGENTS.md`
 - `app/L0/_all/mod/_core/router/AGENTS.md`
+- `app/L0/_all/mod/_core/spaces/AGENTS.md`
 - `app/L0/_all/mod/_core/visual/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
@@ -79,18 +81,19 @@ Current browser entry surfaces are served from `server/pages/`:
 
 - `/`: main app shell from `server/pages/index.html`
 - `/admin`: admin shell from `server/pages/admin.html`, with `meta[name="space-max-layer"]` set to `0` so module and extension resolution stay `L0`-only
-- `/login`: standalone public login screen from `server/pages/login.html`
+- `/login`: standalone public auth entry from `server/pages/login.html`
+- `/enter`: firmware-backed launcher from `server/pages/enter.html`, available to authenticated sessions and single-user runtime while unauthenticated multi-user requests are redirected to `/login`
 - `/logout`: server-side logout action that clears the session cookie and redirects to `/login`
 
 Current major first-party modules under `app/L0/_all/mod/_core/`:
 
 - `framework/`: frontend bootstrap, runtime primitives, component loader, extension system, shared utilities
 - `visual/`: shared visual language, canvas, chrome, buttons, dialog helpers, and conversation rendering primitives
-- `router/`: root routed shell for the authenticated app
+- `router/`: root routed shell for the authenticated app; route-level frame width and other shell-owned layout overrides belong here rather than in feature modules
 - `admin/`: firmware-backed admin shell and panels
 - `onscreen_agent/`: floating routed overlay agent and the first-party user-facing agent surface
 - `onscreen_menu/`: top-right routed shell menu extension
-- `dashboard/` and `space/`: current routed feature modules under the router
+- `dashboard/`, `spaces/`, and the `space/` compatibility shim: current routed feature surfaces under the router
 
 ## Layer Rules And Module Model
 
@@ -197,6 +200,8 @@ Runtime guidance:
 - framework-backed pages that boot through `/mod/_core/framework/js/initFw.js` already initialize the runtime before feature modules mount
 - `globalThis.space` is scoped to the current window or iframe only; do not publish it into other browsing contexts
 - use `space.api` for authenticated backend calls
+- use `space.api.folderDownloadUrl(...)` when a folder download should stay as a browser attachment instead of fetching the archive blob into frontend memory
+- keep feature-owned runtime namespaces under `space` explicit and narrow; `_core/spaces` owns `space.spaces` for persisted space CRUD, widget authoring helpers, and manual layout persistence, and `_core/onscreen_agent` owns `space.onscreenAgent` for overlay display control and prompt submission
 - use `space.api.userSelfInfo()` as the canonical browser-side identity and scope snapshot; it returns group membership plus the readable and writable logical app roots the current user can use from the frontend
 - use `space.config` for frontend reads of backend parameters that were explicitly marked `frontend_exposed`
 - use `space.utils.markdown` and `space.utils.yaml` for lightweight frontend parsing owned by browser modules
@@ -221,6 +226,7 @@ Detailed visual subsystem rules now live in `app/L0/_all/mod/_core/visual/AGENTS
 - treat page shells as extension roots, not as the application body
 - keep extension files thin and keep real implementation in ordinary module files
 - if another feature needs to modify owned behavior, expose a seam in the owner instead of reaching into private internals
+- extend the onscreen overlay through the JS seams documented in `_core/onscreen_agent/AGENTS.md` instead of patching `store.js`, `prompt.js`, `skills.js`, or `api.js` from another module
 - when a style, helper, or runtime contract will be reused by multiple modules, move it into `_core/visual`, `_core/framework`, or another clearly shared owning module
 - do not grow `server/pages/*.html` beyond shell concerns when modules and extension anchors can own the composition
 - do not build new repo-owned first-party app features directly inside transient `L1` or `L2` customware
@@ -229,6 +235,7 @@ Detailed visual subsystem rules now live in `app/L0/_all/mod/_core/visual/AGENTS
 
 - `framework/` owns frontend bootstrap and runtime primitives; see `app/L0/_all/mod/_core/framework/AGENTS.md`
 - `router/` owns the authenticated app shell, routing, and routed extension anchors; see `app/L0/_all/mod/_core/router/AGENTS.md`
+- `dashboard/` owns the routed dashboard shell and its dashboard-local extension seam; see `app/L0/_all/mod/_core/dashboard/AGENTS.md`
 - `visual/` owns the shared visual system and reusable presentation primitives; see `app/L0/_all/mod/_core/visual/AGENTS.md`
 - `admin/` owns the firmware-backed admin shell, panels, and admin-specific skills/runtime glue; see `app/L0/_all/mod/_core/admin/AGENTS.md`
 - `admin/views/agent/` owns the admin-side agent surface; see `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
@@ -236,6 +243,7 @@ Detailed visual subsystem rules now live in `app/L0/_all/mod/_core/visual/AGENTS
 - `admin/views/modules/` owns the firmware-backed modules panel; see `app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 - `onscreen_agent/` owns the floating routed overlay agent; see `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `onscreen_menu/` owns the routed shell menu extension; see `app/L0/_all/mod/_core/onscreen_menu/AGENTS.md`
+- `spaces/` owns the routed spaces canvas, empty-canvas prompt, widget SDK, and persisted centered-coordinate space runtime; see `app/L0/_all/mod/_core/spaces/AGENTS.md`
 
 ## Guidance
 

@@ -56,6 +56,8 @@ Current behavior:
 
 - browser execution blocks are detected by the `_____javascript` separator
 - `execution.js` runs browser-side JavaScript in an async wrapper and formats console output and result values for the thread
+- when an execution follow-up turn returns no assistant content, the runtime retries the same request once automatically before sending a short protocol-correction user message
+- empty-response protocol-correction messages must not re-echo the prior execution output; they should tell the agent to continue from the execution output above or provide the user-facing answer
 - loaded admin skills are passed through execution as typed runtime values, not pasted blindly into the prompt
 - the surface uses the shared visual dialog helpers and shared thread renderer from `_core/visual`
 - assistant streaming is patched into the existing DOM at animation-frame cadence instead of full-thread rerenders

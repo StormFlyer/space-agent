@@ -1,0 +1,140 @@
+.dashboard-spaces-launcher {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.45rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid rgba(148, 167, 201, 0.12);
+}
+
+.dashboard-spaces-launcher-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.dashboard-spaces-launcher-header h2 {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  letter-spacing: -0.03em;
+}
+
+.dashboard-spaces-launcher-copy {
+  margin: 0.45rem 0 0;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+}
+
+.dashboard-spaces-launcher-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 1rem;
+  background: rgba(10, 17, 31, 0.56);
+}
+
+.dashboard-spaces-launcher-notice.is-error {
+  border-color: rgba(255, 141, 152, 0.24);
+}
+
+.dashboard-spaces-launcher-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.dashboard-spaces-launcher-empty {
+  padding: 1rem;
+  border: 1px dashed rgba(148, 167, 201, 0.16);
+  border-radius: 1rem;
+}
+
+.dashboard-spaces-launcher-empty p {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.dashboard-spaces-launcher-empty p + p {
+  margin-top: 0.35rem;
+}
+
+.dashboard-spaces-launcher-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(148, 167, 201, 0.14);
+  border-radius: 1rem;
+  background: rgba(12, 20, 36, 0.78);
+  color: var(--color-text-primary);
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+
+.dashboard-spaces-launcher-item:hover,
+.dashboard-spaces-launcher-item:focus-within {
+  border-color: rgba(125, 220, 255, 0.28);
+  background: rgba(18, 29, 50, 0.92);
+  transform: translateY(-1px);
+}
+
+.dashboard-spaces-launcher-open {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.dashboard-spaces-launcher-open:focus-visible {
+  outline: none;
+}
+
+.dashboard-spaces-launcher-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-spaces-launcher-id {
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+}
+
+.dashboard-spaces-launcher-meta {
+  color: var(--color-text-tertiary);
+  font-size: 0.9rem;
+}
+
+.dashboard-spaces-launcher-delete {
+  align-self: start;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .dashboard-spaces-launcher-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-spaces-launcher-header .primary-button {
+    width: 100%;
+  }
+
+  .dashboard-spaces-launcher-item {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-spaces-launcher-delete {
+    width: 100%;
+    justify-content: center;
+  }
+}

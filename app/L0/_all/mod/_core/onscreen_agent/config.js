@@ -10,6 +10,24 @@ export const DEFAULT_ONSCREEN_AGENT_SETTINGS = {
   paramsText: "temperature:0.2"
 };
 
+function normalizeOnscreenAgentSettingText(value) {
+  return String(value ?? "").trim();
+}
+
+export function isDefaultOnscreenAgentLlmSettings(settings) {
+  const normalizedSettings = settings && typeof settings === "object" ? settings : {};
+
+  return (
+    normalizeOnscreenAgentSettingText(normalizedSettings.apiEndpoint) ===
+      normalizeOnscreenAgentSettingText(DEFAULT_ONSCREEN_AGENT_SETTINGS.apiEndpoint) &&
+    normalizeOnscreenAgentSettingText(normalizedSettings.model) ===
+      normalizeOnscreenAgentSettingText(DEFAULT_ONSCREEN_AGENT_SETTINGS.model) &&
+    normalizeOnscreenAgentMaxTokens(normalizedSettings.maxTokens) === DEFAULT_ONSCREEN_AGENT_SETTINGS.maxTokens &&
+    normalizeOnscreenAgentSettingText(normalizedSettings.paramsText) ===
+      normalizeOnscreenAgentSettingText(DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText)
+  );
+}
+
 export function normalizeOnscreenAgentHistoryHeight(value) {
   const parsedValue = Number(value);
 

@@ -48,6 +48,7 @@ App-file endpoints:
 - `file_copy`
 - `file_move`
 - `file_info`
+- `folder_download`
 
 Current rules:
 
@@ -55,6 +56,8 @@ Current rules:
 - they operate on app-rooted paths and supported endpoints also accept `~` or `~/...`
 - batch operations validate all targets before any mutation begins
 - endpoint-specific validation should stay thin and reuse the shared helper contract
+- `folder_download` supports `HEAD` for permission-only validation and `GET` or `POST` for the actual streamed ZIP response
+- `folder_download` validates readable folder paths through the shared file-access permission model, creates a ZIP archive in `server/tmp/`, and returns a streamed attachment response without buffering the archive in memory
 
 Module endpoints:
 

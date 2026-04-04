@@ -1,5 +1,6 @@
 import { closeDialog, openDialog } from "/mod/_core/visual/forms/dialog.js";
 import { positionPopover } from "/mod/_core/visual/chrome/popover.js";
+import { showToast } from "/mod/_core/visual/chrome/toast.js";
 
 const HOME_REQUEST_PATH = "~/";
 const MAX_TEXT_EDIT_FILE_BYTES = 1024 * 1024;
@@ -183,6 +184,25 @@ function formatNamePreview(entries, limit = LIST_PREVIEW_LIMIT) {
   return remainingCount > 0 ? `${visibleNames.join(", ")} +${remainingCount} more` : visibleNames.join(", ");
 }
 
+function ensureZipFilename(value) {
+  const candidate = String(value || "").trim() || "download";
+  return candidate.toLowerCase().endsWith(".zip") ? candidate : `${candidate}.zip`;
+}
+
+function formatDownloadErrorMessage(entry, error) {
+  const entryLabel = entry?.name || getPathName(entry?.path || "");
+
+  if (isPermissionError(error)) {
+    return `You do not have permission to download ${entryLabel || "this item"}.`;
+  }
+
+  if (isNotFoundError(error)) {
+    return `${entryLabel || "This item"} is no longer available for download.`;
+  }
+
+  return readErrorMessage(error);
+}
+
 const filesModel = {
   actionMenuAnchor: null,
   actionMenuPosition: createActionMenuPosition(),
@@ -358,6 +378,9 @@ const filesModel = {
         icon: "article",
         label: "Edit"
       });
+    }
+
+    if (isSingleEntry) {
       descriptors.push({
         id: "download",
         icon: "download",
@@ -467,8 +490,26 @@ const filesModel = {
     this.renameDraftName = "";
   },
 
-  downloadEntry(entry) {
-    if (!entry || entry.isDirectory) {
+  async downloadEntry(entry) {
+    if (!entry) {
+      return;
+    }
+
+    try {
+      if (entry.isDirectory) {
+        await space.api.call("folder_download", {
+          method: "HEAD",
+          query: {
+            path: entry.path
+          }
+        });
+      } else {
+        await space.api.fileInfo(entry.path);
+      }
+    } catch (error) {
+      showToast(formatDownloadErrorMessage(entry, error), {
+        tone: "error"
+      });
       return;
     }
 
@@ -478,12 +519,21 @@ const filesModel = {
       return;
     }
 
-    const url = new URL(globalThis.window?.location?.origin || globalThis.location?.origin || "http://localhost");
-    url.pathname = `/${entry.path}`;
+    let url;
+
+    if (entry.isDirectory) {
+      url = space.api.folderDownloadUrl(entry.path);
+    } else {
+      url = new URL(globalThis.window?.location?.origin || globalThis.location?.origin || "http://localhost");
+      url.pathname = `/${entry.path}`;
+      url = url.toString();
+    }
 
     const link = documentObject.createElement("a");
-    link.href = url.toString();
-    link.download = entry.name || getPathName(entry.path);
+    link.href = url;
+    link.download = entry.isDirectory
+      ? ensureZipFilename(entry.name || getPathName(entry.path))
+      : entry.name || getPathName(entry.path);
     documentObject.body.append(link);
     link.click();
     link.remove();
@@ -859,7 +909,7 @@ const filesModel = {
       return this.navigateTo(entry.path, options);
     }
 
-    this.downloadEntry(entry);
+    return this.downloadEntry(entry);
   },
 
   async pasteClipboardIntoCurrentDirectory() {
@@ -1083,7 +1133,7 @@ const filesModel = {
         this.closeActionMenu();
         return;
       case "download":
-        this.downloadEntry(entries[0]);
+        void this.downloadEntry(entries[0]);
         this.closeActionMenu();
         return;
       case "edit":

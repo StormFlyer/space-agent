@@ -19,7 +19,7 @@ Current files:
 - `overrides.js`: inheritance ranking, accessible module collection, and override selection
 - `module_inheritance.js`: `/mod/...` file resolution through layered overrides
 - `extension_overrides.js`: extension request-path resolution and grouped batched extension lookup
-- `file_access.js`: canonical app-file permission model and file operations
+- `file_access.js`: canonical app-file permission model, file operations, and readable-folder download resolution
 - `module_manage.js`: module list, info, install, remove, and Git metadata helpers
 
 ## Path And Permission Contract
@@ -82,12 +82,14 @@ Important rules:
 - app-file copy
 - app-file move
 - app-file info
+- readable folder-download permission and path resolution for `folder_download`
 - pattern-based `file_paths` lookup
 - serialized frontend access-scope snapshots used by `user_self_info`
 
 Rules:
 
 - batch file operations must validate all targets before mutation begins
+- single-path app-file deletes must continue to work when request plumbing passes `paths: undefined`; only an explicit non-array `paths` value should be rejected as malformed batch input
 - keep permission, duplication, overlap, path-normalization, and logical-to-disk resolution logic centralized here
 
 `module_manage.js` is the canonical entry point for:

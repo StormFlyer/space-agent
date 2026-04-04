@@ -14,7 +14,7 @@ Current sub-areas:
 
 - `index.css`: shared visual aggregator that imports the reusable layers
 - `canvas/`: authenticated shared backdrop CSS and JS runtimes
-- `chrome/`: topbar, popover, and light chrome behavior
+- `chrome/`: topbar, popover, toast, and light chrome behavior
 - `actions/`: shared button and attachment-chip styling
 - `forms/`: native dialog styling and helpers
 - `conversation/`: shared agent-thread rendering helpers
@@ -34,6 +34,7 @@ Chrome:
 
 - `chrome/topbar.css` owns the shared glass topbar and menu-panel contract used by routed menus and admin tabs
 - `chrome/popover.css` plus `chrome/popover.js` own the shared fixed-position dropdown or overflow-menu positioning contract
+- `chrome/toast.css` plus `chrome/toast.js` own the shared fixed-position toast stack and register `space.visual.showToast(message, options)`
 
 Actions and forms:
 
@@ -43,6 +44,7 @@ Actions and forms:
 Conversation and surfaces:
 
 - `conversation/thread-view.js` exports `createAgentThreadView(config)` and is the shared renderer used by the admin agent and onscreen agent
+- `conversation/thread-view.js` supports an opt-in marked-backed assistant markdown mode through `config.renderMarkdownWithMarked`; that mode uses `_core/framework/js/marked.esm.js`, escapes raw HTML before parsing, strips unsafe markdown link or image URLs after render, wraps rendered tables in `.message-markdown-table-wrap` for feature-owned overflow styling, removes empty generated table headers, and lets the owning feature attach a local assistant markdown class through `config.assistantMarkdownClassName`
 - `surfaces/cards.css` owns shared panel or card wrappers such as `space-panel`
 
 ## Visual System Rules
@@ -57,5 +59,6 @@ Conversation and surfaces:
 
 - prefer semantic tokens from `_core/framework/css/colors.css`
 - prefer composing existing visual primitives over inventing near-duplicates
+- when a feature enables the shared marked-backed thread renderer, keep message-specific heading, table, and rich-content tuning in that feature's own stylesheet instead of baking feature-local markdown presentation into `_core/visual`
 - if a feature needs new shared chrome or surface behavior, add the smallest reusable primitive here and keep feature orchestration in the owning module
 - if a visual change affects app-wide direction, update `/app/AGENTS.md`; if it affects pre-auth mirrored shells, update `server/pages/AGENTS.md` too

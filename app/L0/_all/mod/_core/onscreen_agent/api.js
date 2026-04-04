@@ -66,6 +66,42 @@ function extractNonStreamingMessage(payload) {
   return extractTextContent(message.content || choice.text || "");
 }
 
+function createCompletionResponseMeta(mode) {
+  return {
+    finishReason: "",
+    mode,
+    payloadCount: 0,
+    protocolObserved: false,
+    sawDoneMarker: false,
+    textChunkCount: 0,
+    verifiedEmpty: false
+  };
+}
+
+function noteCompletionPayload(meta, payload, textChunk = "") {
+  meta.payloadCount += 1;
+
+  const finishReason = payload?.choices?.[0]?.finish_reason;
+
+  if (!meta.finishReason && typeof finishReason === "string" && finishReason) {
+    meta.finishReason = finishReason;
+  }
+
+  if (typeof textChunk === "string" && textChunk.trim()) {
+    meta.textChunkCount += 1;
+  }
+}
+
+function finalizeCompletionResponseMeta(meta) {
+  const protocolObserved = meta.mode === "standard" ? meta.payloadCount > 0 : meta.payloadCount > 0 || meta.sawDoneMarker;
+
+  return {
+    ...meta,
+    protocolObserved,
+    verifiedEmpty: protocolObserved && meta.textChunkCount === 0
+  };
+}
+
 function normalizeConversationMessage(message) {
   if (!["user", "assistant"].includes(message?.role)) {
     return null;
@@ -105,12 +141,16 @@ export function buildOnscreenAgentPromptMessages(systemPrompt, messages) {
   return requestMessages;
 }
 
-function createRequestBody(settings, systemPrompt, messages) {
+function createRequestBody(settings, systemPrompt, messages, options = {}) {
+  const requestMessages = Array.isArray(options.messages)
+    ? options.messages
+    : buildOnscreenAgentPromptMessages(systemPrompt, messages);
+
   return {
     ...llmParams.parseOnscreenAgentParamsText(settings.paramsText || ""),
     model: settings.model || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.model,
     stream: true,
-    messages: buildOnscreenAgentPromptMessages(systemPrompt, messages)
+    messages: requestMessages
   };
 }
 
@@ -145,15 +185,20 @@ async function throwResponseError(response) {
 }
 
 async function readStandardResponse(response, onDelta) {
+  const meta = createCompletionResponseMeta("standard");
   const payload = await response.json();
   const message = extractNonStreamingMessage(payload);
+
+  noteCompletionPayload(meta, payload, message);
 
   if (message) {
     onDelta(message);
   }
+
+  return finalizeCompletionResponseMeta(meta);
 }
 
-function parseEventBlock(eventBlock, onDelta) {
+function parseEventBlock(eventBlock, onDelta, meta) {
   const lines = eventBlock.split(/\r?\n/u);
 
   for (const line of lines) {
@@ -168,11 +213,14 @@ function parseEventBlock(eventBlock, onDelta) {
     }
 
     if (value === "[DONE]") {
+      meta.sawDoneMarker = true;
       return true;
     }
 
     const payload = JSON.parse(value);
     const delta = extractStreamingDelta(payload);
+
+    noteCompletionPayload(meta, payload, delta);
 
     if (delta) {
       onDelta(delta);
@@ -183,6 +231,7 @@ function parseEventBlock(eventBlock, onDelta) {
 }
 
 async function readStreamingResponse(response, onDelta) {
+  const meta = createCompletionResponseMeta("stream");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -199,8 +248,8 @@ async function readStreamingResponse(response, onDelta) {
       const eventBlock = buffer.slice(0, boundary).trim();
       buffer = buffer.slice(boundary + 2);
 
-      if (eventBlock && parseEventBlock(eventBlock, onDelta)) {
-        return;
+      if (eventBlock && parseEventBlock(eventBlock, onDelta, meta)) {
+        return finalizeCompletionResponseMeta(meta);
       }
 
       boundary = buffer.indexOf("\n\n");
@@ -210,49 +259,75 @@ async function readStreamingResponse(response, onDelta) {
       const remaining = buffer.trim();
 
       if (remaining) {
-        parseEventBlock(remaining, onDelta);
+        parseEventBlock(remaining, onDelta, meta);
       }
 
-      return;
+      return finalizeCompletionResponseMeta(meta);
     }
   }
 }
 
-export async function streamOnscreenAgentCompletion({ settings, systemPrompt, messages, onDelta, signal }) {
-  if (!settings.apiEndpoint.trim()) {
-    throw new Error("Set an API endpoint before sending a message.");
+export const prepareOnscreenAgentCompletionRequest = globalThis.space.extend(
+  import.meta,
+  async function prepareOnscreenAgentCompletionRequest({ settings, systemPrompt, messages }) {
+    const normalizedSettings =
+      settings && typeof settings === "object" ? settings : config.DEFAULT_ONSCREEN_AGENT_SETTINGS;
+    const requestMessages = buildOnscreenAgentPromptMessages(systemPrompt, messages);
+
+    return {
+      headers: createHeaders(normalizedSettings.apiEndpoint || "", String(normalizedSettings.apiKey || "").trim()),
+      messages: requestMessages,
+      requestBody: createRequestBody(normalizedSettings, systemPrompt, messages, {
+        messages: requestMessages
+      }),
+      requestUrl: resolveChatRequestUrl(normalizedSettings.apiEndpoint || ""),
+      settings: normalizedSettings,
+      systemPrompt
+    };
   }
+);
 
-  if (!settings.apiKey.trim()) {
-    throw new Error("Set an API key before sending a message.");
+export const streamOnscreenAgentCompletion = globalThis.space.extend(
+  import.meta,
+  async function streamOnscreenAgentCompletion({ settings, systemPrompt, messages, onDelta, signal }) {
+    if (!settings.apiEndpoint.trim()) {
+      throw new Error("Set an API endpoint before sending a message.");
+    }
+
+    if (!settings.apiKey.trim()) {
+      throw new Error("Set an API key before sending a message.");
+    }
+
+    if (!settings.model.trim()) {
+      throw new Error("Set a model before sending a message.");
+    }
+
+    const request = await prepareOnscreenAgentCompletionRequest({
+      messages,
+      settings,
+      systemPrompt
+    });
+    const response = await fetch(request.requestUrl, {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(request.requestBody),
+      signal
+    });
+
+    if (!response.ok) {
+      await throwResponseError(response);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.includes("text/event-stream")) {
+      return readStandardResponse(response, onDelta);
+    }
+
+    if (!response.body) {
+      throw new Error("Streaming response body is not available.");
+    }
+
+    return readStreamingResponse(response, onDelta);
   }
-
-  if (!settings.model.trim()) {
-    throw new Error("Set a model before sending a message.");
-  }
-
-  const requestUrl = resolveChatRequestUrl(settings.apiEndpoint);
-  const response = await fetch(requestUrl, {
-    method: "POST",
-    headers: createHeaders(settings.apiEndpoint, settings.apiKey.trim()),
-    body: JSON.stringify(createRequestBody(settings, systemPrompt, messages)),
-    signal
-  });
-
-  if (!response.ok) {
-    await throwResponseError(response);
-  }
-
-  const contentType = response.headers.get("content-type") || "";
-
-  if (!contentType.includes("text/event-stream")) {
-    await readStandardResponse(response, onDelta);
-    return;
-  }
-
-  if (!response.body) {
-    throw new Error("Streaming response body is not available.");
-  }
-
-  await readStreamingResponse(response, onDelta);
-}
+);

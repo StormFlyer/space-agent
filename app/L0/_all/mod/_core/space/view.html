@@ -1,6 +1,7 @@
 <html>
   <head>
     <link rel="stylesheet" href="/mod/_core/space/space.css" />
+    <script type="module" src="/mod/_core/space/compat.js"></script>
   </head>
   <body>
     <section class="space-panel space-view">
@@ -8,7 +9,7 @@
         <header class="space-view-header">
           <div>
             <p class="page-eyebrow">Space</p>
-            <h1 x-text="$router.getParam('mode', '') === 'new' ? 'New Space' : 'Space'"></h1>
+            <h1>Redirecting To Spaces</h1>
           </div>
           <button type="button" class="secondary-button" @click="$router.goTo('dashboard')">
             <x-icon>arrow_back</x-icon>
@@ -18,8 +19,8 @@
 
         <div class="space-view-copy">
           <p>
-            This view was resolved by the main router from the current hash path. Query params stay attached to the
-            routed view and are exposed through <code>$router.current.params</code>.
+            The old <code>#/space</code> route is now a compatibility shim. It forwards to the new
+            <code>#/spaces</code> module and keeps any supported query params.
           </p>
         </div>
 

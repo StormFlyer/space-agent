@@ -52,6 +52,16 @@ function stripDefaultPromptPrefix(storedPrompt, defaultSystemPrompt) {
   return normalizedStoredPrompt.slice(normalizedDefaultPrompt.length).replace(/^\s+/u, "").trim();
 }
 
+function normalizePromptSections(sections) {
+  if (!Array.isArray(sections)) {
+    return [];
+  }
+
+  return sections
+    .map((section) => normalizeSystemPrompt(section))
+    .filter(Boolean);
+}
+
 async function loadPromptFile(promptPath, promptLabel) {
   const response = await fetch(promptPath);
 
@@ -88,51 +98,84 @@ function resolveHistoryCompactPromptConfig(mode) {
   };
 }
 
-export async function fetchDefaultOnscreenAgentSystemPrompt(options = {}) {
-  const forceRefresh = options.forceRefresh === true;
+export const fetchDefaultOnscreenAgentSystemPrompt = globalThis.space.extend(
+  import.meta,
+  async function fetchDefaultOnscreenAgentSystemPrompt(options = {}) {
+    const forceRefresh = options.forceRefresh === true;
 
-  if (!forceRefresh && defaultSystemPromptPromise) {
+    if (!forceRefresh && defaultSystemPromptPromise) {
+      return defaultSystemPromptPromise;
+    }
+
+    defaultSystemPromptPromise = loadPromptFile(
+      DEFAULT_ONSCREEN_AGENT_SYSTEM_PROMPT_PATH,
+      "default onscreen agent system prompt"
+    ).catch((error) => {
+      defaultSystemPromptPromise = null;
+      throw error;
+    });
+
     return defaultSystemPromptPromise;
   }
+);
 
-  defaultSystemPromptPromise = loadPromptFile(
-    DEFAULT_ONSCREEN_AGENT_SYSTEM_PROMPT_PATH,
-    "default onscreen agent system prompt"
-  ).catch((error) => {
-    defaultSystemPromptPromise = null;
-    throw error;
-  });
+export const fetchOnscreenAgentHistoryCompactPrompt = globalThis.space.extend(
+  import.meta,
+  async function fetchOnscreenAgentHistoryCompactPrompt(options = {}) {
+    const forceRefresh = options.forceRefresh === true;
+    const mode = normalizeHistoryCompactMode(options.mode);
 
-  return defaultSystemPromptPromise;
-}
+    if (!forceRefresh && compactPromptPromises[mode]) {
+      return compactPromptPromises[mode];
+    }
 
-export async function fetchOnscreenAgentHistoryCompactPrompt(options = {}) {
-  const forceRefresh = options.forceRefresh === true;
-  const mode = normalizeHistoryCompactMode(options.mode);
+    const promptConfig = resolveHistoryCompactPromptConfig(mode);
+    compactPromptPromises[mode] = loadPromptFile(promptConfig.path, promptConfig.label).catch((error) => {
+      compactPromptPromises[mode] = null;
+      throw error;
+    });
 
-  if (!forceRefresh && compactPromptPromises[mode]) {
     return compactPromptPromises[mode];
   }
-
-  const promptConfig = resolveHistoryCompactPromptConfig(mode);
-  compactPromptPromises[mode] = loadPromptFile(promptConfig.path, promptConfig.label).catch((error) => {
-    compactPromptPromises[mode] = null;
-    throw error;
-  });
-
-  return compactPromptPromises[mode];
-}
+);
 
 export function extractCustomOnscreenAgentSystemPrompt(storedPrompt = "", defaultSystemPrompt = "") {
   return stripDefaultPromptPrefix(storedPrompt, defaultSystemPrompt);
 }
 
-export async function buildRuntimeOnscreenAgentSystemPrompt(systemPrompt = "", options = {}) {
-  const basePrompt = normalizeSystemPrompt(
-    options.defaultSystemPrompt || (await fetchDefaultOnscreenAgentSystemPrompt())
-  );
-  const customPrompt = formatCustomUserInstructions(systemPrompt);
-  const skillsSection = await skills.buildOnscreenSkillsPromptSection();
+const buildOnscreenAgentSystemPromptSections = globalThis.space.extend(
+  import.meta,
+  async function buildOnscreenAgentSystemPromptSections(context = {}) {
+    const basePrompt = normalizeSystemPrompt(
+      context.defaultSystemPrompt || (await fetchDefaultOnscreenAgentSystemPrompt())
+    );
+    const customPrompt = formatCustomUserInstructions(context.systemPrompt);
+    const skillsSection = await skills.buildOnscreenSkillsPromptSection();
+    const automaticallyLoadedSkillsSection =
+      await skills.buildOnscreenAutomaticallyLoadedSkillsPromptSection();
 
-  return [basePrompt, customPrompt, skillsSection].filter(Boolean).join("\n\n");
-}
+    return {
+      ...context,
+      automaticallyLoadedSkillsSection,
+      basePrompt,
+      customPrompt,
+      sections: [basePrompt, customPrompt, skillsSection, automaticallyLoadedSkillsSection].filter(
+        Boolean
+      ),
+      skillsSection
+    };
+  }
+);
+
+export const buildRuntimeOnscreenAgentSystemPrompt = globalThis.space.extend(
+  import.meta,
+  async function buildRuntimeOnscreenAgentSystemPrompt(systemPrompt = "", options = {}) {
+    const promptContext = await buildOnscreenAgentSystemPromptSections({
+      defaultSystemPrompt: options.defaultSystemPrompt,
+      options,
+      systemPrompt
+    });
+
+    return normalizePromptSections(promptContext?.sections).join("\n\n");
+  }
+);

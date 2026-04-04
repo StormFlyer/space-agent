@@ -34,6 +34,7 @@ body.app-page-router > div[x-data] {
 }
 
 .router-stage {
+  width: 100%;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -43,21 +44,33 @@ body.app-page-router > div[x-data] {
   display: grid;
   box-sizing: border-box;
   width: min(100%, 84rem);
+  min-width: 0;
   min-height: 100%;
   margin: 0 auto;
   padding: clamp(20px, 3vw, 34px) clamp(16px, 3vw, 32px) clamp(26px, 4vw, 40px);
 }
 
+.router-stage-inner[data-route-path="spaces"] {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding-inline: 0;
+}
+
 .router-route-frame {
   display: grid;
+  width: 100%;
   min-height: 100%;
   min-width: 0;
+  justify-self: stretch;
 }
 
 .router-route-outlet,
 .router-route-mount {
+  width: 100%;
   min-width: 0;
   min-height: 100%;
+  justify-self: stretch;
 }
 
 .router-route-state {

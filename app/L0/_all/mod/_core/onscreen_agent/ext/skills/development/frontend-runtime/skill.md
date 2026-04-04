@@ -32,6 +32,8 @@ Use this skill when the task changes browser runtime behavior, framework-backed 
   - `space.download`
   - `space.fetchExternal(...)`
 
+`space.api` includes attachment-style helpers such as `space.api.folderDownloadUrl(pathOrOptions)` when a feature needs a same-origin download URL instead of a fetched blob.
+
 ## Store Pattern
 
 - Create stores with `space.fw.createStore(name, model)`.

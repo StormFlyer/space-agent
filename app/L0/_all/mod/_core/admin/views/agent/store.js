@@ -168,7 +168,16 @@ function isExecutionFollowUpKind(kind) {
 }
 
 function buildEmptyAssistantRetryMessage() {
-  return "protocol correction: empty response, continue executing or respond if done";
+  return [
+    "Protocol correction: your previous response was empty.",
+    "Read the execution output above and continue.",
+    "If another browser step is needed, execute again now.",
+    "Otherwise provide the user-facing answer."
+  ].join("\n");
+}
+
+function hasVerifiedEmptyAssistantResponse(streamResult) {
+  return Boolean(streamResult?.responseMeta?.verifiedEmpty);
 }
 
 function isAbortError(error) {
@@ -1144,9 +1153,10 @@ const model = {
     this.runtimeSystemPrompt = runtimeSystemPrompt;
     const controller = new AbortController();
     this.activeRequestController = controller;
+    let responseMeta = null;
 
     try {
-      await agentApi.streamAdminAgentCompletion({
+      responseMeta = await agentApi.streamAdminAgentCompletion({
         settings: this.settings,
         systemPrompt: runtimeSystemPrompt,
         messages: requestMessages,
@@ -1177,6 +1187,7 @@ const model = {
 
         return {
           hasContent,
+          responseMeta,
           stopped: true
         };
       }
@@ -1198,6 +1209,7 @@ const model = {
     this.render();
     return {
       hasContent: Boolean(assistantMessage.content.trim()),
+      responseMeta,
       stopped: false
     };
   },
@@ -1417,10 +1429,18 @@ const model = {
               immediate: true
             });
             this.render();
+
+            if (emptyAssistantRetryCount === 1) {
+              this.status = "Retrying once after an empty assistant response...";
+              continue;
+            }
+
             nextUserMessage = createMessage("user", buildEmptyAssistantRetryMessage(), {
               kind: "execution-retry"
             });
-            this.status = "Retrying: assistant reply was empty after execution...";
+            this.status = hasVerifiedEmptyAssistantResponse(streamResult)
+              ? "Retrying: assistant response was empty after execution..."
+              : "Retrying: no usable assistant content was received after execution...";
             continue;
           }
 

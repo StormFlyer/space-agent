@@ -13,6 +13,7 @@ const ASSET_DIR = path.join(L0_DIR, "assets");
 const API_DIR = path.join(CURRENT_DIR, "api");
 const PAGES_DIR = path.join(CURRENT_DIR, "pages");
 const FILE_WATCH_CONFIG_PATH = path.join(CURRENT_DIR, "lib", "file_watch", "config.yaml");
+const SERVER_TMP_DIR = path.join(CURRENT_DIR, "tmp");
 
 export {
   API_DIR,
@@ -24,5 +25,6 @@ export {
   L1_DIR,
   L2_DIR,
   PAGES_DIR,
-  PROJECT_ROOT
+  PROJECT_ROOT,
+  SERVER_TMP_DIR
 };

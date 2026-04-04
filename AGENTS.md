@@ -108,7 +108,7 @@ Project concepts:
 - the browser authenticates through the server and uses a server-issued session cookie for protected API, module, and app-file access
 - runtime parameters are defined in `commands/params.yaml`; `node space serve` resolves them in this order: launch arguments, stored `.env` params written by `node space set`, then process environment variables, then schema defaults; `CUSTOMWARE_PATH` is the parent directory for writable backend `L1/` and `L2/` storage when configured, and page shells receive only `frontend_exposed` values as injected meta tags
 - app file APIs use logical app-rooted paths such as `L2/alice/user.yaml` or `/app/L2/alice/user.yaml`, and supported endpoints may also accept `~` or `~/...` for the authenticated user's `L2/<username>/...`; those logical paths do not change when `CUSTOMWARE_PATH` relocates the writable backend roots
-- non-`/api` and non-`/mod` browser entry routes are served from `server/pages/`; `/login` is public and the protected page shells live behind the router-side session gate
+- non-`/api` and non-`/mod` browser entry routes are served from `server/pages/`; `/login` and `/enter` are public and the protected page shells live behind the router-side session gate
 - detailed browser-runtime rules live in `/app/AGENTS.md`
 - detailed server-runtime rules live in `/server/AGENTS.md`
 

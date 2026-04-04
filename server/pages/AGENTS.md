@@ -14,12 +14,14 @@ Current page shells:
 
 - `index.html`: authenticated root shell for `/`
 - `admin.html`: authenticated admin shell for `/admin`
-- `login.html`: public login shell for `/login`
+- `login.html`: public password-login shell for `/login`
+- `enter.html`: firmware-backed launcher shell served at `/enter` for launcher-eligible sessions
 
 Current public shell assets:
 
 - `res/space-backdrop.css`
 - `res/space-backdrop.js`
+- `res/enter-guard.js`
 - login-shell image assets under `res/`
 
 ## Shell Contracts
@@ -27,12 +29,14 @@ Current public shell assets:
 `index.html`:
 
 - loads shared framework CSS and `/mod/_core/framework/js/initFw.js`
+- when the current request already has launcher access, receives a page-shell guard before `/mod/...` assets so a new tab or window is redirected to `/enter?next=<current-url>` before customware loads
 - receives injected `meta[name="space-config"]` tags for any `frontend_exposed` runtime parameters
 - keeps the body minimal and exposes exactly the `body/start` extension anchor
 
 `admin.html`:
 
 - loads the same framework bootstrap with `?maxLayer=0`
+- when the current request already has launcher access, receives the same page-shell guard before `/mod/...` assets so a new tab or window is redirected to `/enter?next=<current-url>` before admin shell assets load
 - declares `meta[name="space-max-layer"]` with content `0`
 - receives the same injected `meta[name="space-config"]` tags for `frontend_exposed` runtime parameters
 - keeps the body minimal and exposes exactly the `page/admin/body/start` extension anchor
@@ -42,12 +46,25 @@ Current public shell assets:
 - is public and must not depend on authenticated `/mod/...` assets
 - owns the login flow, guest creation flow, and pre-auth layout
 - reads injected `meta[name="space-config"]` tags directly so guest-login UI can follow backend runtime parameters without authenticated module imports
+- grants same-tab launcher access in `sessionStorage` after successful password sign-in so the tab that just authenticated can land on `/` while fresh tabs still route through `/enter`
 - keeps the self-host call-to-action visually separated from the sign-in form even when guest account creation is disabled and the guest-only block is hidden
+- keeps the mobile shell scrollable when the viewport is shorter than the content, and reserves extra small-screen side spacing for the intro column rather than inflating the login card
 - keeps login-specific styling and motion local
+
+`enter.html`:
+
+- must stay safe even when routed customware is broken
+- must not depend on authenticated `/mod/...` assets
+- is served for launcher-eligible sessions; in multi-user mode, unauthenticated requests are redirected to `/login` before this shell loads
+- owns the firmware-backed launcher UI that links to `/` and `/admin`, labeled as Enter Space and Admin Mode
+- accepts an optional `next` query param, grants per-tab launcher access through `sessionStorage`, and routes the Enter or Admin buttons back to the original target when appropriate
+- mirrors the login-shell intro layout, floating astronaut, and public backdrop while replacing the right-side form card with direct launcher actions
+- keeps extra small-screen side spacing around the launcher shell and a generous top and inter-button gap when the launcher actions collapse below the intro copy
+- should reuse the mirrored public backdrop assets instead of introducing a second standalone visual system
 
 ## Public Asset Mirroring
 
-`/login` cannot use authenticated module assets, so `server/pages/res/space-backdrop.css` and `server/pages/res/space-backdrop.js` mirror the shared visual backdrop for public-shell use.
+`/login` and `/enter` cannot rely on authenticated module assets for recovery-safe shells, and launcher-gated page shells must redirect before customware loads, so `server/pages/res/space-backdrop.css`, `server/pages/res/space-backdrop.js`, and `server/pages/res/enter-guard.js` mirror the public-shell recovery behavior.
 
 Rules:
 
@@ -59,6 +76,6 @@ Rules:
 
 - keep page shells thin and static
 - expose stable anchors and let browser modules own dynamic composition
-- keep pre-auth shell behavior local to `login.html` and `server/pages/res/`
+- keep recovery-safe shell behavior local to `login.html`, `enter.html`, and `server/pages/res/`
 - do not hardwire authenticated app structure into page shells when an extension seam can own it
 - if page-shell contracts or mirrored public assets change, update this file and the related app docs

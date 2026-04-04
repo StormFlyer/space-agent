@@ -2,6 +2,7 @@
   <head>
     <link rel="stylesheet" href="/mod/_core/visual/index.css" />
     <link rel="stylesheet" href="/mod/_core/onscreen_agent/onscreen-agent.css" />
+    <link rel="stylesheet" href="/mod/_core/onscreen_agent/response-markdown.css" />
     <script type="module" src="/mod/_core/onscreen_agent/store.js"></script>
   </head>
   <body>
@@ -109,17 +110,30 @@
                     class="composer-attachment-input"
                     @change="$store.onscreenAgent.handleAttachmentInput($event)"
                   />
-                  <textarea
-                    x-ref="input"
-                    name="message"
-                    rows="1"
-                    aria-label="Message onscreen agent"
-                    :placeholder="$store.onscreenAgent.composerPlaceholder"
-                    x-model="$store.onscreenAgent.draft"
-                    :disabled="$store.onscreenAgent.isComposerInputDisabled"
-                    @input="$store.onscreenAgent.handleDraftInput($event)"
-                    @keydown="$store.onscreenAgent.handleComposerKeydown($event)"
-                  ></textarea>
+                  <div class="onscreen-agent-composer-input-wrap">
+                    <textarea
+                      x-ref="input"
+                      name="message"
+                      rows="1"
+                      aria-label="Message onscreen agent"
+                      :placeholder="$store.onscreenAgent.composerPlaceholder"
+                      x-model="$store.onscreenAgent.draft"
+                      :disabled="$store.onscreenAgent.isComposerInputDisabled || $store.onscreenAgent.shouldShowApiKeyWarning"
+                      @input="$store.onscreenAgent.handleDraftInput($event)"
+                      @keydown="$store.onscreenAgent.handleComposerKeydown($event)"
+                    ></textarea>
+                    <template x-if="$store.onscreenAgent.shouldShowApiKeyWarning">
+                      <div class="onscreen-agent-set-api-key-overlay">
+                        <button
+                          type="button"
+                          class="onscreen-agent-set-api-key-button"
+                          @click="$store.onscreenAgent.openSettingsDialog()"
+                        >
+                          Set API key
+                        </button>
+                      </div>
+                    </template>
+                  </div>
                   <div class="onscreen-agent-composer-actions">
                     <button
                       type="button"

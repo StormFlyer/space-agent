@@ -28,7 +28,9 @@ Current behavior:
 - metadata checks use `space.api.fileInfo(...)`
 - text reads and writes use `space.api.fileRead(...)` and `space.api.fileWrite(...)`
 - delete, copy, and move actions use the corresponding `space.api` helpers
-- files are downloaded from the browser surface; directories are navigated
+- files still download through direct authenticated app fetches
+- single-folder downloads use `space.api.folderDownloadUrl(...)`, which targets the streamed `/api/folder_download` ZIP attachment endpoint
+- downloads now preflight backend access before the browser transfer starts, and failures surface through the shared visual toast primitive instead of silently failing
 
 Current editor rule:
 
@@ -45,6 +47,8 @@ Current editor rule:
 - selection-summary actions when multiple paths are checked
 - clipboard state for cut or copied items plus paste into the current folder
 - shared dialogs for rename, delete confirmation, and text editing
+- file and folder download actions, with folders routed through the server ZIP endpoint
+- toast-based download error feedback for permission and not-found failures
 - inline reporting for not-found and permission errors
 
 ## Development Guidance

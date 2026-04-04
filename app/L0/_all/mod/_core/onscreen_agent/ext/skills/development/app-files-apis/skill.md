@@ -18,8 +18,13 @@ Current wrapped helpers include:
 - `await space.api.fileCopy(pathOrEntries, toPath?)`
 - `await space.api.fileMove(pathOrEntries, toPath?)`
 - `await space.api.fileInfo(pathOrOptions)`
+- `space.api.folderDownloadUrl(pathOrOptions)`
 - `await space.api.userSelfInfo()`
 - `await space.api.call("endpoint_name", { method, query, body, headers, signal })`
+
+Use `space.api.folderDownloadUrl(...)` when the browser should trigger a regular authenticated folder download without buffering the ZIP file into frontend memory first.
+
+When a UI needs user-visible download failure feedback without fetching the archive blob into memory, preflight the request with `space.api.fileInfo(...)` for files or `space.api.call("folder_download", { method: "HEAD", query: { path } })` for folders before starting the browser download.
 
 ## Logical Path Rules
 

@@ -6,12 +6,14 @@ import {
   ASSET_DIR,
   FILE_WATCH_CONFIG_PATH,
   PAGES_DIR,
-  PROJECT_ROOT
+  PROJECT_ROOT,
+  SERVER_TMP_DIR
 } from "./config.js";
 import { loadApiRegistry } from "./lib/api/registry.js";
 import { createAuthService } from "./lib/auth/service.js";
 import { ensureCustomwareDirectories } from "./lib/customware/layout.js";
 import { createWatchdog } from "./lib/file_watch/watchdog.js";
+import { createTmpWatch, ensureServerTmpDir } from "./lib/tmp/tmp_watch.js";
 import { loadProjectEnvFiles } from "./lib/utils/env_files.js";
 import { createRuntimeParams } from "./lib/utils/runtime_params.js";
 import { sendJson } from "./router/responses.js";
@@ -31,6 +33,7 @@ async function createAgentServer(overrides = {}) {
   const assetDir = overrides.assetDir || ASSET_DIR;
   const pagesDir = overrides.pagesDir || PAGES_DIR;
   const projectRoot = overrides.projectRoot || PROJECT_ROOT;
+  const tmpDir = overrides.tmpDir || SERVER_TMP_DIR;
   const runtimeParamEnv = overrides.runtimeParamEnv || { ...process.env };
   const legacyRuntimeParamOverrides = {};
 
@@ -60,6 +63,7 @@ async function createAgentServer(overrides = {}) {
   const port = Number(runtimeParams.get("PORT", 3000));
 
   ensureCustomwareDirectories(projectRoot, runtimeParams);
+  ensureServerTmpDir(tmpDir);
 
   const watchdog =
     overrides.watchdog ||
@@ -67,6 +71,11 @@ async function createAgentServer(overrides = {}) {
       configPath: overrides.fileWatchConfigPath || FILE_WATCH_CONFIG_PATH,
       projectRoot,
       runtimeParams
+    });
+  const tmpWatch =
+    overrides.tmpWatch ||
+    createTmpWatch({
+      tmpDir
     });
   const auth = overrides.auth || createAuthService({ projectRoot, runtimeParams, watchdog });
 
@@ -110,36 +119,49 @@ async function createAgentServer(overrides = {}) {
     assetDir,
     pagesDir,
     auth,
+    tmpDir,
+    tmpWatch,
     watchdog,
     runtimeParams,
     server,
     browserUrl: `http://${browserHost}:${port}`,
     async listen() {
-      await watchdog.start();
+      tmpWatch.start();
 
-      return new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(port, host, () => {
-          server.removeListener("error", reject);
-          resolve({
-            apiDir,
-            apiRegistry,
-            appDir,
-            browserHost,
-            host,
-            port,
-            assetDir,
-            pagesDir,
-            auth,
-            watchdog,
-            runtimeParams,
-            server,
-            browserUrl: `http://${browserHost}:${port}`
+      try {
+        await watchdog.start();
+
+        return await new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(port, host, () => {
+            server.removeListener("error", reject);
+            resolve({
+              apiDir,
+              apiRegistry,
+              appDir,
+              browserHost,
+              host,
+              port,
+              assetDir,
+              pagesDir,
+              auth,
+              tmpDir,
+              tmpWatch,
+              watchdog,
+              runtimeParams,
+              server,
+              browserUrl: `http://${browserHost}:${port}`
+            });
           });
         });
-      });
+      } catch (error) {
+        tmpWatch.stop();
+        watchdog.stop();
+        throw error;
+      }
     },
     async close() {
+      tmpWatch.stop();
       watchdog.stop();
 
       await new Promise((resolve, reject) => {

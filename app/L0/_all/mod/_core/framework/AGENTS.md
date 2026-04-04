@@ -50,6 +50,7 @@ Current boot order:
 Current API helper contract:
 
 - `space.api.userSelfInfo()` is the canonical frontend snapshot for authenticated identity plus readable and writable logical app roots; frontend agents should use it before choosing where to store files or modules
+- `space.api.folderDownloadUrl(pathOrOptions)` builds the same-origin attachment URL for a permission-checked folder ZIP download without fetching the archive into browser memory
 
 Rules:
 

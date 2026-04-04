@@ -66,6 +66,42 @@ function extractNonStreamingMessage(payload) {
   return extractTextContent(message.content || choice.text || "");
 }
 
+function createCompletionResponseMeta(mode) {
+  return {
+    finishReason: "",
+    mode,
+    payloadCount: 0,
+    protocolObserved: false,
+    sawDoneMarker: false,
+    textChunkCount: 0,
+    verifiedEmpty: false
+  };
+}
+
+function noteCompletionPayload(meta, payload, textChunk = "") {
+  meta.payloadCount += 1;
+
+  const finishReason = payload?.choices?.[0]?.finish_reason;
+
+  if (!meta.finishReason && typeof finishReason === "string" && finishReason) {
+    meta.finishReason = finishReason;
+  }
+
+  if (typeof textChunk === "string" && textChunk.trim()) {
+    meta.textChunkCount += 1;
+  }
+}
+
+function finalizeCompletionResponseMeta(meta) {
+  const protocolObserved = meta.mode === "standard" ? meta.payloadCount > 0 : meta.payloadCount > 0 || meta.sawDoneMarker;
+
+  return {
+    ...meta,
+    protocolObserved,
+    verifiedEmpty: protocolObserved && meta.textChunkCount === 0
+  };
+}
+
 function normalizeConversationMessage(message) {
   if (!["user", "assistant"].includes(message?.role)) {
     return null;
@@ -158,15 +194,20 @@ async function throwResponseError(response) {
 }
 
 async function readStandardResponse(response, onDelta) {
+  const meta = createCompletionResponseMeta("standard");
   const payload = await response.json();
   const message = extractNonStreamingMessage(payload);
+
+  noteCompletionPayload(meta, payload, message);
 
   if (message) {
     onDelta(message);
   }
+
+  return finalizeCompletionResponseMeta(meta);
 }
 
-function parseEventBlock(eventBlock, onDelta) {
+function parseEventBlock(eventBlock, onDelta, meta) {
   const lines = eventBlock.split(/\r?\n/u);
 
   for (const line of lines) {
@@ -181,11 +222,14 @@ function parseEventBlock(eventBlock, onDelta) {
     }
 
     if (value === "[DONE]") {
+      meta.sawDoneMarker = true;
       return true;
     }
 
     const payload = JSON.parse(value);
     const delta = extractStreamingDelta(payload);
+
+    noteCompletionPayload(meta, payload, delta);
 
     if (delta) {
       onDelta(delta);
@@ -196,6 +240,7 @@ function parseEventBlock(eventBlock, onDelta) {
 }
 
 async function readStreamingResponse(response, onDelta) {
+  const meta = createCompletionResponseMeta("stream");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -212,8 +257,8 @@ async function readStreamingResponse(response, onDelta) {
       const eventBlock = buffer.slice(0, boundary).trim();
       buffer = buffer.slice(boundary + 2);
 
-      if (eventBlock && parseEventBlock(eventBlock, onDelta)) {
-        return;
+      if (eventBlock && parseEventBlock(eventBlock, onDelta, meta)) {
+        return finalizeCompletionResponseMeta(meta);
       }
 
       boundary = buffer.indexOf("\n\n");
@@ -223,10 +268,10 @@ async function readStreamingResponse(response, onDelta) {
       const remaining = buffer.trim();
 
       if (remaining) {
-        parseEventBlock(remaining, onDelta);
+        parseEventBlock(remaining, onDelta, meta);
       }
 
-      return;
+      return finalizeCompletionResponseMeta(meta);
     }
   }
 }
@@ -259,13 +304,12 @@ export async function streamAdminAgentCompletion({ settings, systemPrompt, messa
   const contentType = response.headers.get("content-type") || "";
 
   if (!contentType.includes("text/event-stream")) {
-    await readStandardResponse(response, onDelta);
-    return;
+    return readStandardResponse(response, onDelta);
   }
 
   if (!response.body) {
     throw new Error("Streaming response body is not available.");
   }
 
-  await readStreamingResponse(response, onDelta);
+  return readStreamingResponse(response, onDelta);
 }

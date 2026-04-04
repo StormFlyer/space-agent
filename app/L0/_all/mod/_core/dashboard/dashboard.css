@@ -36,10 +36,6 @@
   margin-top: 1.35rem;
 }
 
-.dashboard-launch-button {
-  min-width: 11.5rem;
-}
-
 .dashboard-route-note {
   color: var(--color-text-tertiary);
   font-size: 0.86rem;
@@ -50,9 +46,5 @@
   .dashboard-hero-actions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .dashboard-launch-button {
-    width: 100%;
   }
 }

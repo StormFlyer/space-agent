@@ -16,6 +16,10 @@ function createDesktopRuntimeParamOverrides() {
   };
 }
 
+function resolveDesktopLaunchPath() {
+  return serverRuntime?.runtimeParams?.get?.("SINGLE_USER_APP", false) ? "/enter" : "/";
+}
+
 function showMainWindow() {
   if (!mainWindow) {
     return;
@@ -61,7 +65,7 @@ function createWindow() {
     mainWindow = null;
   });
 
-  mainWindow.loadURL(`http://${serverRuntime.host}:${serverRuntime.port}`);
+  mainWindow.loadURL(`http://${serverRuntime.host}:${serverRuntime.port}${resolveDesktopLaunchPath()}`);
   return mainWindow;
 }
 

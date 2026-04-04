@@ -14,16 +14,9 @@
           <code>$router</code>.
         </p>
         <div class="dashboard-hero-actions">
-          <button
-            type="button"
-            class="primary-button dashboard-launch-button"
-            @click="$router.goTo('space', { params: { mode: 'new' } })"
-          >
-            <x-icon>add</x-icon>
-            <span>New Space</span>
-          </button>
           <span class="dashboard-route-note">Routes live under <code>/#/...</code>.</span>
         </div>
+        <x-extension id="_core/dashboard/content_end"></x-extension>
       </div>
     </section>
   </body>

@@ -1,17 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { isSingleUserApp } from "../lib/utils/runtime_params.js";
 import { sendFile, sendJson, sendNotFound, sendRedirect } from "./responses.js";
 
 const LEGACY_ROUTE_REDIRECTS = new Map([
   ["/index.html", "/"],
   ["/login.html", "/login"],
+  ["/enter.html", "/enter"],
   ["/admin.html", "/admin"]
 ]);
 
 const LOGOUT_ROUTE = "/logout";
 const PAGE_RESOURCE_PREFIX = "/pages/res/";
 const FRONTEND_CONFIG_META_NAME = "space-config";
+const ENTER_GUARD_PLACEHOLDER = "<!-- SPACE_SINGLE_USER_ENTER_GUARD -->";
+const ENTER_GUARD_SCRIPT_TAG = '    <script src="/pages/res/enter-guard.js"></script>';
 
 function createSessionCleanupHeaders(requestContext, auth) {
   if (
@@ -77,6 +81,27 @@ function injectFrontendConfigMetaTags(sourceText, runtimeParams) {
   return `${metaTags}\n${sourceText}`;
 }
 
+function hasEnterLauncherAccess(requestContext, runtimeParams) {
+  return Boolean(requestContext?.user?.isAuthenticated) || isSingleUserApp(runtimeParams);
+}
+
+function injectEnterGuard(sourceText, options = {}) {
+  const pageName = String(options.pageName || "");
+
+  if (!sourceText.includes(ENTER_GUARD_PLACEHOLDER)) {
+    return sourceText;
+  }
+
+  if (
+    !["index.html", "admin.html"].includes(pageName) ||
+    !hasEnterLauncherAccess(options.requestContext, options.runtimeParams)
+  ) {
+    return sourceText.replace(ENTER_GUARD_PLACEHOLDER, "");
+  }
+
+  return sourceText.replace(ENTER_GUARD_PLACEHOLDER, ENTER_GUARD_SCRIPT_TAG);
+}
+
 async function sendPageHtml(res, filePath, options = {}) {
   let sourceText;
 
@@ -87,7 +112,14 @@ async function sendPageHtml(res, filePath, options = {}) {
     return;
   }
 
-  const body = injectFrontendConfigMetaTags(sourceText, options.runtimeParams);
+  const body = injectFrontendConfigMetaTags(
+    injectEnterGuard(sourceText, {
+      pageName: options.pageName,
+      requestContext: options.requestContext,
+      runtimeParams: options.runtimeParams
+    }),
+    options.runtimeParams
+  );
 
   res.writeHead(200, {
     ...(options.headers || {}),
@@ -217,13 +249,20 @@ async function handlePageRequest(res, requestUrl, options = {}) {
   }
 
   const isLoginPage = pageRequest.pageName === "login.html";
+  const isEnterPage = pageRequest.pageName === "enter.html";
+  const canAccessEnterPage = hasEnterLauncherAccess(requestContext, runtimeParams);
+
+  if (isEnterPage && !canAccessEnterPage) {
+    sendRedirect(res, "/login", createSessionCleanupHeaders(requestContext, auth));
+    return;
+  }
 
   if (isLoginPage && requestContext?.user?.isAuthenticated) {
     sendRedirect(res, "/", createSessionCleanupHeaders(requestContext, auth));
     return;
   }
 
-  if (!isLoginPage && !requestContext?.user?.isAuthenticated) {
+  if (!isLoginPage && !isEnterPage && !requestContext?.user?.isAuthenticated) {
     sendRedirect(res, "/login", createSessionCleanupHeaders(requestContext, auth));
     return;
   }
@@ -235,6 +274,8 @@ async function handlePageRequest(res, requestUrl, options = {}) {
 
   await sendPageHtml(res, pageRequest.filePath, {
     headers: createSessionCleanupHeaders(requestContext, auth),
+    pageName: pageRequest.pageName,
+    requestContext,
     runtimeParams
   });
 }

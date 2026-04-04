@@ -382,6 +382,18 @@ function createFileInfoRequest(pathOrOptions) {
   };
 }
 
+function createFolderDownloadQuery(pathOrOptions) {
+  if (isPlainObject(pathOrOptions) && typeof pathOrOptions.path === "string") {
+    return {
+      path: pathOrOptions.path
+    };
+  }
+
+  return {
+    path: pathOrOptions
+  };
+}
+
 export function createApiClient(options = {}) {
   const basePath = options.basePath || "/api";
 
@@ -527,6 +539,17 @@ export function createApiClient(options = {}) {
   }
 
   /**
+   * Build a same-origin attachment URL for downloading an authenticated folder
+   * as a ZIP archive without buffering it in the browser.
+   *
+   * @param {string | { path: string }} pathOrOptions
+   * @returns {string}
+   */
+  function folderDownloadUrl(pathOrOptions) {
+    return buildApiUrl(basePath, "folder_download", createFolderDownloadQuery(pathOrOptions)).toString();
+  }
+
+  /**
    * Move or rename authenticated app files or folders.
    * `fileMove()` accepts app-rooted paths such as `L2/alice/note.txt`,
    * directory paths that end with `/`, and the `~` or `~/...` shorthand for
@@ -561,6 +584,7 @@ export function createApiClient(options = {}) {
     fileMove,
     fileRead,
     fileWrite,
+    folderDownloadUrl,
     health,
     userSelfInfo
   };

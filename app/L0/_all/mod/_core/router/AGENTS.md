@@ -60,11 +60,18 @@ Current anchors:
 
 The routed overlay anchors are the correct place for floating routed UI such as `_core/onscreen_agent/`. Do not hardwire overlay features directly into `view.html` when an extension seam already exists.
 
+Current shell layout note:
+
+- `.router-stage-inner` is the default centered content column for routed pages
+- the shell currently marks the active route path on `.router-stage-inner` via `data-route-path`
+- route-specific shell layout overrides that affect the routed frame width belong here in router-owned CSS; `_core/spaces` uses a full-width stage override keyed by `data-route-path="spaces"`, and the routed frame wrappers should keep stretching to full width so full-bleed routes are not trapped by intermediate grid items
+
 ## Development Guidance
 
 - use extension anchors for shell-level additions instead of editing `view.html` directly whenever possible
 - keep route resolution rules centralized in `route-path.js`
 - keep route lifecycle, scroll memory, and `space.router` behavior centralized in `router-store.js`
+- route-load failures should log to the browser console before the router renders its inline error card
 - routed feature modules should ship their own `view.html` and let the router mount them
 - if route resolution or stable router seams change, also update `app/L0/_all/mod/_core/onscreen_agent/ext/skills/development/` because the onscreen development skill mirrors this contract
 - if you add or rename a stable router seam, update this file and `/app/AGENTS.md`

@@ -27,11 +27,13 @@ The browser app mounts through page shells in `server/pages/`. `/login` is publi
 
 Important frontend-facing endpoint families are:
 
-- app files: `file_list`, `file_paths`, `file_read`, `file_write`, `file_delete`, `file_copy`, `file_move`, `file_info`
+- app files: `file_list`, `file_paths`, `file_read`, `file_write`, `file_delete`, `file_copy`, `file_move`, `file_info`, `folder_download`
 - modules: `module_list`, `module_info`, `module_install`, `module_remove`
 - runtime and identity: `extensions_load`, `password_generate`, `user_self_info`
 
 These endpoints are thin wrappers over shared helpers in `server/lib/customware/` and `server/lib/auth/`.
+
+`folder_download` supports `HEAD` for permission-only validation and `GET` or `POST` for the streamed ZIP attachment. It creates the archive in `server/tmp/` only for the actual download response, after the shared file-access layer approves the requested folder path.
 
 `user_self_info` is the frontend-facing identity and access-scope snapshot. It exposes the current user's readable and writable logical app roots without authorizing backend edits.
 

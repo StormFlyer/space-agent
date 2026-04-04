@@ -4,11 +4,26 @@
   x-data="{
     isOpen: false,
     singleUserApp: Boolean(window.space?.config?.get('SINGLE_USER_APP', false)),
-    navigateTop(targetUrl) {
+    enterTabAccessKey: 'space.enter.tab-access',
+    isEmbeddedInsideAdmin() {
+      if (window.top === window) {
+        return false;
+      }
+
       try {
-        window.top.location.assign(targetUrl);
+        return window.top.location.pathname === '/admin';
       } catch {
-        window.location.assign(targetUrl);
+        return false;
+      }
+    },
+    navigateCurrent(targetUrl, mode = 'assign') {
+      window.location[mode](targetUrl);
+    },
+    navigateTop(targetUrl, mode = 'assign') {
+      try {
+        window.top.location[mode](targetUrl);
+      } catch {
+        this.navigateCurrent(targetUrl, mode);
       }
     },
     openAdmin() {
@@ -17,6 +32,25 @@
       adminUrl.searchParams.set('url', currentUrl);
       this.isOpen = false;
       this.navigateTop(adminUrl.href);
+    },
+    openDashboard() {
+      const dashboardUrl = new URL(window.location.pathname + window.location.search, window.location.origin);
+      dashboardUrl.hash = '/dashboard';
+      this.isOpen = false;
+
+      if (this.isEmbeddedInsideAdmin()) {
+        this.navigateCurrent(dashboardUrl.href);
+        return;
+      }
+
+      this.navigateTop(dashboardUrl.href);
+    },
+    openLeave() {
+      this.isOpen = false;
+      try {
+        window.sessionStorage.removeItem(this.enterTabAccessKey);
+      } catch {}
+      this.navigateTop('/enter', 'replace');
     }
   }"
   class="onscreen-menu"
@@ -52,6 +86,15 @@
         type="button"
         class="space-topbar-menu-action"
         role="menuitem"
+        @click="openDashboard()"
+      >
+        <x-icon>space_dashboard</x-icon>
+        <span class="space-topbar-menu-action-label">Dashboard</span>
+      </button>
+      <button
+        type="button"
+        class="space-topbar-menu-action"
+        role="menuitem"
         @click="openAdmin()"
       >
         <x-icon>admin_panel_settings</x-icon>
@@ -66,6 +109,16 @@
       >
         <x-icon>logout</x-icon>
         <span class="space-topbar-menu-action-label">Logout</span>
+      </button>
+      <button
+        type="button"
+        class="space-topbar-menu-action"
+        role="menuitem"
+        x-show="singleUserApp"
+        @click="openLeave()"
+      >
+        <x-icon>exit_to_app</x-icon>
+        <span class="space-topbar-menu-action-label">Leave</span>
       </button>
     </div>
   </div>

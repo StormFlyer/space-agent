@@ -1,7 +1,45 @@
+import { marked } from "/mod/_core/framework/js/marked.esm.js";
+
 const EXECUTION_STATUS_LINE_PATTERN = /^execution\s+(.+)$/iu;
 const EXECUTION_PRINT_LINE_PATTERN = /^(log|info|warn|error|debug|dir|table|assert):\s*/iu;
 const ORDERED_LIST_LINE_PATTERN = /^\d+\.\s+/u;
+const SAFE_MARKDOWN_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
 const STICKY_SCROLL_THRESHOLD = 32;
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function joinClassNames(...classNames) {
+  return classNames
+    .map((className) => (typeof className === "string" ? className.trim() : ""))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isSafeMarkdownUrl(value) {
+  const normalizedValue = typeof value === "string" ? value.trim() : "";
+
+  if (!normalizedValue) {
+    return false;
+  }
+
+  if (normalizedValue.startsWith("#") || normalizedValue.startsWith("/") || normalizedValue.startsWith("./") || normalizedValue.startsWith("../")) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(normalizedValue, window.location.href);
+    return SAFE_MARKDOWN_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
 
 function defaultFormatAttachmentSize(bytes) {
   const normalizedBytes = Number.isFinite(Number(bytes)) ? Math.max(0, Math.round(Number(bytes))) : 0;
@@ -40,6 +78,9 @@ export function createAgentThreadView(config = {}) {
   const autoResizeMaxHeight = Number.isFinite(Number(config.autoResizeMaxHeight))
     ? Math.max(32, Math.round(Number(config.autoResizeMaxHeight)))
     : 120;
+  const renderMarkdownWithMarked = config.renderMarkdownWithMarked === true;
+  const assistantMarkdownClassName =
+    typeof config.assistantMarkdownClassName === "string" ? config.assistantMarkdownClassName.trim() : "";
   const defaultEmptyStateText =
     typeof config.emptyStateText === "string" && config.emptyStateText.trim()
       ? config.emptyStateText.trim()
@@ -387,7 +428,57 @@ export function createAgentThreadView(config = {}) {
     });
   }
 
-  function createFormattedMessageBlock(text, className = "message-content message-markdown") {
+  function finalizeMarkdownLinks(container) {
+    container.querySelectorAll("a[href]").forEach((link) => {
+      const href = link.getAttribute("href");
+
+      if (!isSafeMarkdownUrl(href)) {
+        link.replaceWith(document.createTextNode(link.textContent || href || ""));
+        return;
+      }
+
+      link.target = "_blank";
+      link.rel = "noreferrer";
+    });
+
+    container.querySelectorAll("img[src]").forEach((image) => {
+      const source = image.getAttribute("src");
+
+      if (!isSafeMarkdownUrl(source)) {
+        image.remove();
+        return;
+      }
+
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+    });
+  }
+
+  function hasVisibleMarkdownHeaderText(cell) {
+    return typeof cell?.textContent === "string" && cell.textContent.trim().length > 0;
+  }
+
+  function finalizeMarkdownTables(container) {
+    container.querySelectorAll("table").forEach((table) => {
+      const header = table.querySelector("thead");
+      const headerCells = Array.from(header?.querySelectorAll("th") || []);
+
+      if (header && headerCells.length && headerCells.every((cell) => !hasVisibleMarkdownHeaderText(cell))) {
+        header.remove();
+      }
+
+      if (table.parentElement?.classList.contains("message-markdown-table-wrap")) {
+        return;
+      }
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "message-markdown-table-wrap";
+      table.replaceWith(wrapper);
+      wrapper.append(table);
+    });
+  }
+
+  function createLegacyFormattedMessageBlock(text, className) {
     const normalizedText = String(text || "").trim();
 
     if (!normalizedText) {
@@ -428,6 +519,48 @@ export function createAgentThreadView(config = {}) {
     }
 
     return content.childNodes.length ? content : null;
+  }
+
+  function createMarkedMessageBlock(text, className) {
+    const normalizedText = String(text || "").trim();
+
+    if (!normalizedText) {
+      return null;
+    }
+
+    const content = document.createElement("div");
+    content.className = className;
+
+    try {
+      const renderedHtml = marked.parse(escapeHtml(normalizedText), {
+        async: false,
+        breaks: true,
+        gfm: true
+      });
+
+      if (renderedHtml && typeof renderedHtml.then === "function") {
+        return createLegacyFormattedMessageBlock(normalizedText, className);
+      }
+
+      content.innerHTML = String(renderedHtml || "");
+      finalizeMarkdownLinks(content);
+      finalizeMarkdownTables(content);
+      return content.childNodes.length ? content : null;
+    } catch {
+      return createLegacyFormattedMessageBlock(normalizedText, className);
+    }
+  }
+
+  function createFormattedMessageBlock(text, className = "message-content message-markdown") {
+    if (renderMarkdownWithMarked) {
+      return createMarkedMessageBlock(text, className);
+    }
+
+    return createLegacyFormattedMessageBlock(text, className);
+  }
+
+  function buildAssistantMarkdownClassName(...classNames) {
+    return joinClassNames("message-content", "message-markdown", assistantMarkdownClassName, ...classNames);
   }
 
   function createAttachmentList(attachments) {
@@ -812,7 +945,7 @@ export function createAgentThreadView(config = {}) {
         return bubble;
       }
 
-      const contentBlock = createFormattedMessageBlock(message.content || "");
+      const contentBlock = createFormattedMessageBlock(message.content || "", buildAssistantMarkdownClassName());
 
       if (contentBlock) {
         bubble.append(contentBlock);
@@ -897,7 +1030,7 @@ export function createAgentThreadView(config = {}) {
         if (section.executeDisplay.narration) {
           const narrationBlock = createFormattedMessageBlock(
             section.executeDisplay.narration,
-            "message-content message-markdown terminal-note"
+            buildAssistantMarkdownClassName("terminal-note")
           );
 
           if (narrationBlock) {
@@ -919,7 +1052,7 @@ export function createAgentThreadView(config = {}) {
         sectionElement.classList.add("is-followup");
         const followupBlock = createFormattedMessageBlock(
           section.message.content || (section.message.streaming ? "Streaming..." : ""),
-          "message-content message-markdown terminal-followup"
+          buildAssistantMarkdownClassName("terminal-followup")
         );
 
         if (followupBlock) {

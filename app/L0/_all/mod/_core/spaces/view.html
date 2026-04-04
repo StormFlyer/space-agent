@@ -1,0 +1,29 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="/mod/_core/spaces/spaces.css" />
+    <script type="module" src="/mod/_core/spaces/store.js"></script>
+  </head>
+  <body>
+    <div x-data class="spaces-view-root">
+      <template x-if="$store.spacesPage">
+        <section
+          class="spaces-canvas"
+          x-cloak
+          x-init="$nextTick(() => $store.spacesPage.mount({ canvas: $refs.canvas, grid: $refs.grid }))"
+          x-destroy="$store.spacesPage.unmount()"
+          x-ref="canvas"
+        >
+          <button
+            x-show="$store.spacesPage.currentSpace?.widgetIds?.length"
+            type="button"
+            class="spaces-canvas-debug-button"
+            @click="void $store.spacesPage.consolidateCurrentSpace()"
+          >
+            Consolidate
+          </button>
+          <div class="spaces-widget-grid" x-ref="grid" :aria-busy="String($store.spacesPage.loadingSpace)"></div>
+        </section>
+      </template>
+    </div>
+  </body>
+</html>

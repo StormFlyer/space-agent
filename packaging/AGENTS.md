@@ -58,7 +58,7 @@ Native hosts should remain thin:
 - open the browser app inside the host surface
 - native host startup code must await async server-factory work before reading runtime fields such as `host`, `port`, `server`, or `watchdog`, and host shutdown paths must tolerate partial startup failure
 - packaged desktop builds must keep the app tree unpacked on disk instead of wrapping it in `app.asar`, because the server watchdog and app-file indexing layers depend on watching real directories under the bundled project tree
-- packaged desktop builds may add packaging-owned runtime param overrides when the native host contract requires them; the current Electron host forces `SINGLE_USER_APP=true` only for packaged apps, while source-checkout desktop dev runs keep normal runtime auth behavior
+- packaged desktop builds may add packaging-owned runtime param overrides when the native host contract requires them; the current Electron host forces `SINGLE_USER_APP=true` only for packaged apps, opens `/enter` as the recovery-safe splash entry when single-user mode is active, and source-checkout desktop dev runs keep normal runtime auth behavior
 - preserve platform-neutral behavior here when possible
 
 ## Guidance

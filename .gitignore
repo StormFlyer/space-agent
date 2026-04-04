@@ -10,3 +10,8 @@ release
 /app/L2/
 .env
 tmp/
+!server/lib/tmp/
+!server/lib/tmp/**
+!server/tmp/
+server/tmp/*
+!server/tmp/.gitignore

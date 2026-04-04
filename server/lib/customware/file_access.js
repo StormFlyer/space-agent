@@ -513,7 +513,7 @@ function readAppFile(options = {}) {
   return readAppFiles(options).files[0];
 }
 
-function getAppPathInfo(options = {}) {
+function resolveReadableExistingAppPath(options = {}) {
   const pathIndex = getPathIndex(options.watchdog);
   const accessController = createAppAccessController({
     groupIndex: getGroupIndex(options.watchdog, options.runtimeParams),
@@ -523,7 +523,7 @@ function getAppPathInfo(options = {}) {
   const requestedPath = String(options.path || "").trim();
 
   if (!requestedPath) {
-    throw createHttpError("File path must not be empty.", 400);
+    throw createHttpError("Path must not be empty.", 400);
   }
 
   const resolvedPath = resolveExistingProjectPath(
@@ -535,20 +535,54 @@ function getAppPathInfo(options = {}) {
     throw createHttpError(`Path not found: ${requestedPath}`, 404);
   }
 
+  if (options.expectedKind === "directory" && !resolvedPath.isDirectory) {
+    throw createHttpError(`Expected a folder path: ${requestedPath}`, 400);
+  }
+
+  if (options.expectedKind === "file" && resolvedPath.isDirectory) {
+    throw createHttpError(`Expected a file path: ${requestedPath}`, 400);
+  }
+
   ensureReadableProjectPath(resolvedPath.projectPath, accessController);
 
-  const absolutePath = createAbsolutePath(
-    String(options.projectRoot || ""),
-    resolvedPath.projectPath,
-    options.runtimeParams
-  );
-  const stats = fs.statSync(absolutePath);
+  return {
+    absolutePath: createAbsolutePath(
+      String(options.projectRoot || ""),
+      resolvedPath.projectPath,
+      options.runtimeParams
+    ),
+    isDirectory: resolvedPath.isDirectory,
+    path: toAppRelativePath(resolvedPath.projectPath),
+    projectPath: resolvedPath.projectPath,
+    requestedPath
+  };
+}
+
+function getAppPathInfo(options = {}) {
+  const resolvedPath = resolveReadableExistingAppPath(options);
+  const stats = fs.statSync(resolvedPath.absolutePath);
 
   return {
     isDirectory: stats.isDirectory(),
     modifiedAt: stats.mtime.toISOString(),
-    path: toAppRelativePath(resolvedPath.projectPath),
+    path: resolvedPath.path,
     size: Number(stats.size) || 0
+  };
+}
+
+function getAppFolderDownloadInfo(options = {}) {
+  const resolvedPath = resolveReadableExistingAppPath({
+    ...options,
+    expectedKind: "directory"
+  });
+
+  return {
+    absolutePath: resolvedPath.absolutePath,
+    directoryName:
+      path.basename(stripTrailingSlash(resolvedPath.absolutePath)) ||
+      path.basename(stripTrailingSlash(resolvedPath.path)) ||
+      "download",
+    path: resolvedPath.path
   };
 }
 
@@ -902,7 +936,7 @@ function normalizeDeleteEntries(options = {}) {
     return options.paths;
   }
 
-  if ("paths" in options) {
+  if (options.paths !== undefined) {
     throw createHttpError("File delete batch must provide a paths array.", 400);
   }
 
@@ -1181,6 +1215,7 @@ export {
   createHttpError,
   deleteAppPath,
   deleteAppPaths,
+  getAppFolderDownloadInfo,
   getAppPathInfo,
   listAppPaths,
   listAppPathsByPatterns,

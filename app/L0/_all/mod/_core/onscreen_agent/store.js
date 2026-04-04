@@ -40,6 +40,10 @@ const RAW_DIALOG_ELEMENT_ID = "onscreen-agent-raw-dialog";
 const SETTINGS_DIALOG_ELEMENT_ID = "onscreen-agent-settings-dialog";
 const VIEWPORT_VISIBILITY_CHECK_INTERVAL_MS = 2000;
 const DEFAULT_AVATAR_SIZE_PX = 72;
+const HIDDEN_COMPOSER_STATUS_TEXTS = new Set([
+  "Loading onscreen agent...",
+  "Loading default system prompt..."
+]);
 
 function getRuntime() {
   const runtime = globalThis.space;
@@ -53,6 +57,76 @@ function getRuntime() {
   }
 
   return runtime;
+}
+
+function ensureOnscreenAgentRuntimeNamespace(store) {
+  const runtime = getRuntime();
+  const previousNamespace =
+    runtime.onscreenAgent && typeof runtime.onscreenAgent === "object" ? runtime.onscreenAgent : {};
+  const namespace = {
+    ...previousNamespace,
+    async show(options = {}) {
+      await store.init();
+      const targetMode =
+        options.mode === DISPLAY_MODE_COMPACT || options.mode === DISPLAY_MODE_FULL
+          ? options.mode
+          : store.displayMode;
+
+      if (targetMode === DISPLAY_MODE_COMPACT) {
+        store.showCompactMode({
+          focusInput: options.focusInput !== false,
+          hideBubble: options.hideBubble === true,
+          persist: options.persist !== false
+        });
+      } else {
+        store.showFullMode({
+          focusInput: options.focusInput !== false,
+          hideBubble: options.hideBubble !== false,
+          persist: options.persist !== false
+        });
+      }
+
+      return store;
+    },
+    async submitPrompt(promptText, options = {}) {
+      const normalizedPrompt = String(promptText || "").trim();
+
+      if (!normalizedPrompt) {
+        throw new Error("A prompt is required.");
+      }
+
+      await namespace.show({
+        focusInput: options.focusInput !== false,
+        hideBubble: true,
+        mode: options.mode,
+        persist: options.persist !== false
+      });
+
+      store.syncDraft(normalizedPrompt);
+
+      if (store.isSending) {
+        if (store.canQueueSubmissionWhileBusy) {
+          store.queueDraftSubmission();
+          return {
+            prompt: normalizedPrompt,
+            queued: true
+          };
+        }
+
+        throw new Error("The onscreen agent is busy and cannot accept another prompt right now.");
+      }
+
+      await store.submitMessage();
+
+      return {
+        prompt: normalizedPrompt,
+        queued: false
+      };
+    }
+  };
+
+  runtime.onscreenAgent = namespace;
+  return namespace;
 }
 
 function resolveDialogRef(refs, refKey, elementId) {
@@ -106,6 +180,61 @@ function createStreamingAssistantMessage() {
     ...createMessage("assistant", ""),
     streaming: true
   };
+}
+
+function shouldHideComposerStatus(status) {
+  const normalizedStatus = typeof status === "string" ? status.trim() : "";
+  return HIDDEN_COMPOSER_STATUS_TEXTS.has(normalizedStatus);
+}
+
+function cloneConversationMessage(message) {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  return {
+    ...message,
+    attachments: Array.isArray(message.attachments) ? [...message.attachments] : []
+  };
+}
+
+function applyConversationMessage(targetMessage, nextMessage) {
+  if (!targetMessage || !nextMessage || targetMessage === nextMessage) {
+    return targetMessage;
+  }
+
+  Object.assign(targetMessage, nextMessage);
+  targetMessage.attachments = Array.isArray(nextMessage.attachments) ? [...nextMessage.attachments] : [];
+  return targetMessage;
+}
+
+const processOnscreenAgentMessage = globalThis.space.extend(
+  import.meta,
+  async function processOnscreenAgentMessage(context = {}) {
+    return context;
+  }
+);
+
+async function resolveProcessedOnscreenAgentMessage(context = {}) {
+  const fallbackMessage = cloneConversationMessage(context.message);
+  const processedContext = await processOnscreenAgentMessage({
+    ...context,
+    history: Array.isArray(context.history)
+      ? context.history.map((message) => cloneConversationMessage(message)).filter(Boolean)
+      : [],
+    message: fallbackMessage
+  });
+  const processedMessage =
+    processedContext && typeof processedContext === "object" ? processedContext.message : fallbackMessage;
+
+  return cloneConversationMessage(processedMessage) || fallbackMessage;
+}
+
+async function createProcessedMessage(role, content, options = {}, context = {}) {
+  return resolveProcessedOnscreenAgentMessage({
+    ...context,
+    message: createMessage(role, content, options)
+  });
 }
 
 function createRuntimeMessageSnapshot(message) {
@@ -283,16 +412,17 @@ function buildMissingExecutionResultRetryMessage(executionOutputText) {
   ].join("\n");
 }
 
-function buildEmptyAssistantRetryMessage(executionOutputText) {
-  const summarizedOutput = summarizeProtocolMessage(executionOutputText);
-
+function buildEmptyAssistantRetryMessage() {
   return [
-    "Protocol correction: your last reply after browser execution was empty.",
-    `Execution output: "${summarizedOutput}"`,
-    "Read the execution output and continue.",
+    "Protocol correction: your previous response was empty.",
+    "Read the execution output above and continue.",
     "If another browser step is needed, execute again now.",
-    "Do not stop until you provide a user-facing answer or a clear error."
+    "Otherwise provide the user-facing answer."
   ].join("\n");
+}
+
+function hasVerifiedEmptyAssistantResponse(streamResult) {
+  return Boolean(streamResult?.responseMeta?.verifiedEmpty);
 }
 
 function isAbortError(error) {
@@ -388,6 +518,10 @@ function extractAssistantBubbleText(content) {
   return normalizeUiBubbleText(normalizedContent);
 }
 
+function hasStreamingExecutionBlock(content) {
+  return execution.extractExecuteBlocks(content).length > 0;
+}
+
 function runOnNextFrame(callback) {
   if (typeof callback !== "function") {
     return;
@@ -447,6 +581,7 @@ const model = {
   composerActionMenuAnchor: null,
   composerActionMenuPosition: createComposerActionMenuPosition(),
   composerActionMenuRenderToken: 0,
+  compactAssistantBubbleMessageId: "",
   configPersistTimer: 0,
   currentChatRuntime: null,
   defaultSystemPrompt: "",
@@ -535,7 +670,7 @@ const model = {
   get composerPlaceholder() {
     const statusText = typeof this.status === "string" ? this.status.trim() : "";
 
-    if (!statusText) {
+    if (!statusText || shouldHideComposerStatus(statusText)) {
       return "Message Space Agent...";
     }
 
@@ -590,6 +725,15 @@ const model = {
 
   get isComposerInputDisabled() {
     return !this.isInitialized || this.isCompactingHistory;
+  },
+
+  get shouldShowApiKeyWarning() {
+    return (
+      this.isInitialized &&
+      !this.isLoadingDefaultSystemPrompt &&
+      !String(this.settings.apiKey || "").trim() &&
+      config.isDefaultOnscreenAgentLlmSettings(this.settings)
+    );
   },
 
   get isCompactMode() {
@@ -1082,18 +1226,43 @@ const model = {
     }
   },
 
-  showCompactAssistantReplyBubble(assistantContent) {
+  showCompactAssistantReplyBubble(assistantContent, options = {}) {
     if (!this.isCompactMode) {
-      return;
+      return false;
+    }
+
+    const messageId = typeof options.messageId === "string" ? options.messageId : "";
+
+    if (messageId && this.compactAssistantBubbleMessageId === messageId) {
+      return false;
     }
 
     const bubbleText = extractAssistantBubbleText(assistantContent);
 
     if (!bubbleText) {
-      return;
+      return false;
+    }
+
+    if (messageId) {
+      this.compactAssistantBubbleMessageId = messageId;
     }
 
     this.showUiBubble(bubbleText);
+    return true;
+  },
+
+  maybeShowCompactStreamingAssistantBubble(assistantMessage) {
+    if (!assistantMessage || assistantMessage.role !== "assistant") {
+      return false;
+    }
+
+    if (!hasStreamingExecutionBlock(assistantMessage.content)) {
+      return false;
+    }
+
+    return this.showCompactAssistantReplyBubble(assistantMessage.content, {
+      messageId: assistantMessage.id
+    });
   },
 
   setStreamingAssistantStatus(content) {
@@ -1209,15 +1378,24 @@ const model = {
     this.currentChatRuntime.messages = this.history.map((message) => createRuntimeMessageSnapshot(message));
   },
 
-  replaceHistory(nextHistory) {
+  async replaceHistory(nextHistory) {
     this.history = Array.isArray(nextHistory) ? [...nextHistory] : [];
     this.syncCurrentChatRuntime();
-    this.refreshHistoryMetrics();
+    await this.refreshHistoryMetrics();
   },
 
-  refreshHistoryMetrics() {
+  async refreshHistoryMetrics() {
     this.historyText = buildPromptHistoryText("", this.history);
-    this.promptHistoryMessages = agentApi.buildOnscreenAgentPromptMessages(this.runtimeSystemPrompt, this.history);
+    const preparedRequest = await agentApi.prepareOnscreenAgentCompletionRequest({
+      messages: this.history,
+      settings: this.settings,
+      systemPrompt: this.runtimeSystemPrompt
+    });
+    this.promptHistoryMessages = Array.isArray(preparedRequest?.requestBody?.messages)
+      ? preparedRequest.requestBody.messages
+      : Array.isArray(preparedRequest?.messages)
+        ? preparedRequest.messages
+        : agentApi.buildOnscreenAgentPromptMessages(this.runtimeSystemPrompt, this.history);
     this.historyTokenCount = countTextTokens(formatPromptHistoryText(this.promptHistoryMessages));
   },
 
@@ -1293,7 +1471,7 @@ const model = {
         targetWindow: window
       });
       this.syncCurrentChatRuntime();
-      skills.installOnscreenSkillRuntime();
+      await skills.installOnscreenSkillRuntime();
 
       try {
         const [storedConfig, storedHistory] = await Promise.all([
@@ -1313,7 +1491,7 @@ const model = {
         this.agentY = storedConfig.agentY;
         this.displayMode = normalizeDisplayMode(storedConfig.displayMode);
         this.historyHeight = config.normalizeOnscreenAgentHistoryHeight(storedConfig.historyHeight);
-        this.replaceHistory(storedHistory.map((message) => normalizeStoredMessage(message)));
+        await this.replaceHistory(storedHistory.map((message) => normalizeStoredMessage(message)));
         this.ensurePosition({
           persist: true,
           reflow: true
@@ -1752,7 +1930,7 @@ const model = {
     this.runtimeSystemPrompt = await prompt.buildRuntimeOnscreenAgentSystemPrompt(this.systemPrompt, {
       defaultSystemPrompt: this.defaultSystemPrompt
     });
-    this.refreshHistoryMetrics();
+    await this.refreshHistoryMetrics();
     return this.runtimeSystemPrompt;
   },
 
@@ -2295,9 +2473,8 @@ const model = {
     this.recordInteraction();
 
     try {
-      const runtimeSystemPrompt = await this.refreshRuntimeSystemPrompt();
-      this.promptHistoryMessages = agentApi.buildOnscreenAgentPromptMessages(runtimeSystemPrompt, this.history);
-      const totalTokens = countTextTokens(formatPromptHistoryText(this.promptHistoryMessages));
+      await this.refreshRuntimeSystemPrompt();
+      const totalTokens = this.historyTokenCount;
       this.promptHistoryTitle = `Context window (${totalTokens.toLocaleString()} tokens)`;
       this.promptHistoryMode = "text";
       openDialog(resolveDialogRef(this.refs, "historyDialog", HISTORY_DIALOG_ELEMENT_ID));
@@ -2326,7 +2503,7 @@ const model = {
     this.clearComposerDraft();
     this.queuedSubmissions = [];
     this.cancelStreamingMessageRender();
-    this.replaceHistory([]);
+    await this.replaceHistory([]);
     this.executionOutputOverrides = Object.create(null);
     this.rerunningMessageId = "";
     this.stopRequested = false;
@@ -2359,15 +2536,17 @@ const model = {
     this.runtimeSystemPrompt = runtimeSystemPrompt;
     const controller = new AbortController();
     this.activeRequestController = controller;
+    let responseMeta = null;
 
     try {
-      await agentApi.streamOnscreenAgentCompletion({
+      responseMeta = await agentApi.streamOnscreenAgentCompletion({
         settings: this.settings,
         systemPrompt: runtimeSystemPrompt,
         messages: requestMessages,
         onDelta: (delta) => {
           assistantMessage.content += delta;
           this.setStreamingAssistantStatus(assistantMessage.content);
+          this.maybeShowCompactStreamingAssistantBubble(assistantMessage);
           this.scheduleStreamingMessageRender(assistantMessage);
         },
         signal: controller.signal
@@ -2381,10 +2560,21 @@ const model = {
       }
 
       if (isAbortError(error) && this.stopRequested) {
-        const hasContent = Boolean(assistantMessage.content.trim());
+        let hasContent = Boolean(assistantMessage.content.trim());
 
         if (hasContent) {
-          this.refreshHistoryMetrics();
+          applyConversationMessage(
+            assistantMessage,
+            await resolveProcessedOnscreenAgentMessage({
+              history: requestMessages,
+              message: assistantMessage,
+              phase: "assistant-response",
+              responseMeta,
+              store: this
+            })
+          );
+          hasContent = Boolean(assistantMessage.content.trim());
+          await this.refreshHistoryMetrics();
           await this.persistHistory({
             immediate: true
           });
@@ -2393,6 +2583,7 @@ const model = {
 
         return {
           hasContent,
+          responseMeta,
           stopped: true
         };
       }
@@ -2407,13 +2598,24 @@ const model = {
       this.activeRequestController = null;
     }
 
-    this.refreshHistoryMetrics();
+    applyConversationMessage(
+      assistantMessage,
+      await resolveProcessedOnscreenAgentMessage({
+        history: requestMessages,
+        message: assistantMessage,
+        phase: "assistant-response",
+        responseMeta,
+        store: this
+      })
+    );
+    await this.refreshHistoryMetrics();
     await this.persistHistory({
       immediate: true
     });
     this.render();
     return {
       hasContent: Boolean(assistantMessage.content.trim()),
+      responseMeta,
       stopped: false
     };
   },
@@ -2500,12 +2702,22 @@ const model = {
             throw new Error("History compaction returned no content.");
           }
 
-          const compactedMessage = createMessage("user", normalizedCompactedHistory, {
-            kind: "history-compact"
-          });
+          const compactedMessage = await createProcessedMessage(
+            "user",
+            normalizedCompactedHistory,
+            {
+              kind: "history-compact"
+            },
+            {
+              history: this.history,
+              mode,
+              phase: "history-compact",
+              store: this
+            }
+          );
           this.executionOutputOverrides = Object.create(null);
           this.rerunningMessageId = "";
-          this.replaceHistory([compactedMessage]);
+          await this.replaceHistory([compactedMessage]);
           await this.persistHistory({
             immediate: true
           });
@@ -2608,7 +2820,7 @@ const model = {
 
         if (streamResult.stopped) {
           if (!streamResult.hasContent) {
-            this.replaceHistory(requestMessages);
+            await this.replaceHistory(requestMessages);
             await this.persistHistory({
               immediate: true
             });
@@ -2619,36 +2831,53 @@ const model = {
         }
 
         const boundaryActionAfterResponse = this.getBoundaryAction();
+        const hasAssistantContent = Boolean(assistantMessage.content.trim());
 
-        if (streamResult.hasContent) {
-          this.showCompactAssistantReplyBubble(assistantMessage.content);
+        if (hasAssistantContent) {
+          this.showCompactAssistantReplyBubble(assistantMessage.content, {
+            messageId: assistantMessage.id
+          });
         }
 
         if (boundaryActionAfterResponse) {
           return boundaryActionAfterResponse;
         }
 
-        if (!streamResult.hasContent) {
+        if (!hasAssistantContent) {
           if (isExecutionFollowUpKind(nextUserMessage.kind) && emptyAssistantRetryCount < MAX_PROTOCOL_RETRY_COUNT) {
             emptyAssistantRetryCount += 1;
-            this.replaceHistory(requestMessages);
+            await this.replaceHistory(requestMessages);
             await this.persistHistory({
               immediate: true
             });
             this.render();
-            nextUserMessage = createMessage(
+
+            if (emptyAssistantRetryCount === 1) {
+              this.status = "Retrying once after an empty assistant response...";
+              continue;
+            }
+
+            nextUserMessage = await createProcessedMessage(
               "user",
-              buildEmptyAssistantRetryMessage(nextUserMessage.content),
+              buildEmptyAssistantRetryMessage(),
               {
                 kind: "execution-retry"
+              },
+              {
+                history: requestMessages,
+                phase: "execution-retry",
+                responseMeta: streamResult.responseMeta,
+                store: this
               }
             );
-            this.status = "Retrying: assistant reply was empty after execution...";
+            this.status = hasVerifiedEmptyAssistantResponse(streamResult)
+              ? "Retrying: assistant response was empty after execution..."
+              : "Retrying: no usable assistant content was received after execution...";
             continue;
           }
 
           assistantMessage.content = "[No content returned]";
-          this.refreshHistoryMetrics();
+          await this.refreshHistoryMetrics();
           await this.persistHistory({
             immediate: true
           });
@@ -2660,9 +2889,9 @@ const model = {
         this.cancelStreamingMessageRender();
 
         if (!assistantMessage.content.trim()) {
-          this.replaceHistory(requestMessages);
+          await this.replaceHistory(requestMessages);
         } else {
-          this.refreshHistoryMetrics();
+          await this.refreshHistoryMetrics();
         }
 
         await this.persistHistory({
@@ -2679,10 +2908,20 @@ const model = {
         return "complete";
       }
 
-      const executionOutputMessage = createMessage("user", execution.formatExecutionResultsMessage(executionResults), {
-        kind: "execution-output"
-      });
-      this.replaceHistory([...this.history, executionOutputMessage]);
+      const executionOutputMessage = await createProcessedMessage(
+        "user",
+        execution.formatExecutionResultsMessage(executionResults),
+        {
+          kind: "execution-output"
+        },
+        {
+          executionResults,
+          history: this.history,
+          phase: "execution-output",
+          store: this
+        }
+      );
+      await this.replaceHistory([...this.history, executionOutputMessage]);
       await this.persistHistory({
         immediate: true
       });
@@ -2699,11 +2938,18 @@ const model = {
         missingExecutionResultRetryCount < MAX_PROTOCOL_RETRY_COUNT
       ) {
         missingExecutionResultRetryCount += 1;
-        nextUserMessage = createMessage(
+        nextUserMessage = await createProcessedMessage(
           "user",
           buildMissingExecutionResultRetryMessage(executionOutputMessage.content),
           {
             kind: "execution-retry"
+          },
+          {
+            executionOutputMessage,
+            executionResults,
+            history: this.history,
+            phase: "execution-retry",
+            store: this
           }
         );
         this.status = "Retrying: browser code returned no result...";
@@ -2814,9 +3060,19 @@ const model = {
       }
     }
 
-    const userMessage = createMessage("user", draftSubmission.content, {
-      attachments: draftSubmission.attachments
-    });
+    const userMessage = await createProcessedMessage(
+      "user",
+      draftSubmission.content,
+      {
+        attachments: draftSubmission.attachments
+      },
+      {
+        draftSubmission,
+        history: this.history,
+        phase: "submit",
+        store: this
+      }
+    );
     this.clearComposerDraft();
     await this.runSubmissionSeries(userMessage);
   },
@@ -2924,5 +3180,6 @@ const model = {
 };
 
 const onscreenAgent = space.fw.createStore("onscreenAgent", model);
+ensureOnscreenAgentRuntimeNamespace(onscreenAgent);
 
 export { onscreenAgent };

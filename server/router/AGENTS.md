@@ -56,6 +56,9 @@ Pages:
 
 - `pages_handler.js` is the only owner of page auth gating, pretty-route redirects, `/logout`, `/pages/res/...`, and injected frontend runtime-config meta tags
 - `/login` is public
+- `/enter` serves the firmware-backed launcher shell for launcher-eligible sessions: always in `SINGLE_USER_APP=true`, and also for authenticated multi-user requests; unauthenticated multi-user requests are redirected to `/login`
+- `pages_handler.js` injects a pre-module page-shell guard into `/` and `/admin` whenever the current request already has launcher access, so a new browser tab or window is redirected to `/enter?next=<current-url>` while reloads in the same tab keep loading normally
+- `/logout` redirects to `/login`
 - `/` and `/admin` require authentication
 
 Modules:

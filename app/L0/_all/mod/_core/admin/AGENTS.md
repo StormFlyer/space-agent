@@ -71,6 +71,7 @@ Current shell responsibilities:
 - `views/shell/shell.js` owns split sizing, drag-resize behavior, orientation-dependent layout, `?url=` startup handling, and leave-admin navigation back into the current iframe URL
 - `views/shell/page.js` owns admin tabs, quick actions, tab keyboard behavior, and cached `space.api.userSelfInfo()` state
 - the active admin tab is remembered in `sessionStorage`
+- iframe-local routed navigation such as the onscreen menu Dashboard action should keep the right-hand pane inside the iframe unless the action explicitly leaves `/admin`
 
 `/admin` runs with `maxLayer=0`, so all module and extension fetches for the admin UI stay firmware-backed even though app-file APIs still work across normal readable or writable layers.
 

@@ -4,7 +4,7 @@
 
 `_core/onscreen_menu/` owns the routed top-right page menu.
 
-It is a thin shell extension that mounts into the router shell, exposes the Admin action, conditionally exposes Logout when cookie-backed auth is active, and preserves the current routed URL when jumping into `/admin`.
+It is a thin shell extension that mounts into the router shell, exposes the Dashboard and Admin actions, conditionally exposes Logout when cookie-backed auth is active, and preserves the current routed URL when jumping into `/admin`.
 
 Documentation is top priority for this module. After any change under `_core/onscreen_menu/`, update this file and any affected parent docs in the same session.
 
@@ -20,10 +20,14 @@ This module owns:
 Current behavior:
 
 - the menu mounts through `_core/router/shell_start`
+- the Dashboard action returns the app shell to `#/dashboard`
 - the Admin action builds `/admin?url=<current-path-search-hash>` so the admin iframe opens on the current app location
 - navigation prefers `window.top` and falls back to the current window
+- when the routed app is embedded inside the `/admin` split-view iframe, the Dashboard action stays in the current iframe instead of navigating the top-level admin shell away
 - the Logout action is hidden when frontend config reports `SINGLE_USER_APP=true`
+- the Leave action is shown when frontend config reports `SINGLE_USER_APP=true`
 - when shown, Logout navigates to `/logout`
+- when shown, Leave clears the current tab's launcher-access grant and navigates to `/enter`
 
 ## Development Guidance
 

@@ -1,4 +1,5 @@
 const ONSCREEN_TOP_LEVEL_SKILL_FILE_PATTERN = "mod/*/*/ext/skills/*/skill.md";
+const ONSCREEN_ALL_SKILL_FILE_PATTERN = "mod/*/*/ext/skills/**/skill.md";
 const SKILL_FILE_NAME = "skill.md";
 const SKILLS_ROOT_SEGMENT = "/ext/skills/";
 export const ONSCREEN_SKILL_LOAD_HOOK_KEY = "__spaceOnscreenAgentOnSkillLoad";
@@ -70,6 +71,34 @@ function buildSkillListLines(skills) {
   });
 }
 
+function normalizeSkillMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return {};
+  }
+
+  return { ...metadata };
+}
+
+function readSkillMetadataBoolean(metadata, key) {
+  const value = metadata?.[key];
+
+  if (value === true || value === 1) {
+    return true;
+  }
+
+  if (value === false || value === 0 || value == null) {
+    return false;
+  }
+
+  const normalizedValue = String(value).trim().toLowerCase();
+
+  if (!normalizedValue) {
+    return false;
+  }
+
+  return ["true", "1", "yes", "on"].includes(normalizedValue);
+}
+
 function buildSkillConflictLines(conflicts) {
   if (!conflicts.length) {
     return [];
@@ -88,49 +117,52 @@ function buildSkillFilePattern(path) {
   return `mod/*/*/ext/skills/${normalizeSkillPath(path)}/skill.md`;
 }
 
-async function listDiscoveredSkillFiles(pattern) {
-  let result;
+const listDiscoveredSkillFiles = globalThis.space.extend(
+  import.meta,
+  async function listDiscoveredSkillFiles(pattern) {
+    let result;
 
-  try {
-    result = await globalThis.space.api.call("file_paths", {
-      body: {
-        patterns: [pattern]
-      },
-      method: "POST"
+    try {
+      result = await globalThis.space.api.call("file_paths", {
+        body: {
+          patterns: [pattern]
+        },
+        method: "POST"
+      });
+    } catch (error) {
+      throw new Error(`Unable to list onscreen skills: ${error.message}`);
+    }
+
+    const matchedPaths = Array.isArray(result?.[pattern]) ? result[pattern] : [];
+    const effectiveSkillFiles = new Map();
+
+    matchedPaths.forEach((matchedPath) => {
+      const skillFile = parseDiscoveredSkillFile(matchedPath);
+
+      if (!skillFile) {
+        return;
+      }
+
+      effectiveSkillFiles.set(`${skillFile.modulePath}|${skillFile.path}`, skillFile);
     });
-  } catch (error) {
-    throw new Error(`Unable to list onscreen skills: ${error.message}`);
+
+    return [...effectiveSkillFiles.values()].sort((left, right) => {
+      const pathCompare = left.path.localeCompare(right.path);
+
+      if (pathCompare !== 0) {
+        return pathCompare;
+      }
+
+      const moduleCompare = left.modulePath.localeCompare(right.modulePath);
+
+      if (moduleCompare !== 0) {
+        return moduleCompare;
+      }
+
+      return left.filePath.localeCompare(right.filePath);
+    });
   }
-
-  const matchedPaths = Array.isArray(result?.[pattern]) ? result[pattern] : [];
-  const effectiveSkillFiles = new Map();
-
-  matchedPaths.forEach((matchedPath) => {
-    const skillFile = parseDiscoveredSkillFile(matchedPath);
-
-    if (!skillFile) {
-      return;
-    }
-
-    effectiveSkillFiles.set(`${skillFile.modulePath}|${skillFile.path}`, skillFile);
-  });
-
-  return [...effectiveSkillFiles.values()].sort((left, right) => {
-    const pathCompare = left.path.localeCompare(right.path);
-
-    if (pathCompare !== 0) {
-      return pathCompare;
-    }
-
-    const moduleCompare = left.modulePath.localeCompare(right.modulePath);
-
-    if (moduleCompare !== 0) {
-      return moduleCompare;
-    }
-
-    return left.filePath.localeCompare(right.filePath);
-  });
-}
+);
 
 async function readSkillFiles(skillFiles) {
   if (!skillFiles.length) {
@@ -159,11 +191,14 @@ async function readSkillFiles(skillFiles) {
       parsedDocument?.frontmatter && typeof parsedDocument.frontmatter === "object"
         ? parsedDocument.frontmatter
         : {};
+    const metadata = normalizeSkillMetadata(frontmatter.metadata);
 
     return {
+      alwaysLoaded: readSkillMetadataBoolean(metadata, "always_loaded"),
       content,
       description: String(frontmatter.description || "").trim(),
       filePath: skillFile.filePath,
+      metadata,
       modulePath: skillFile.modulePath,
       name: String(frontmatter.name || skillFile.path).trim() || skillFile.path,
       path: skillFile.path
@@ -201,93 +236,138 @@ function buildOnscreenSkillIndex(discoveredSkills) {
   conflicts.sort((left, right) => left.path.localeCompare(right.path));
 
   return {
+    alwaysLoadedSkills: skills.filter((skill) => skill.alwaysLoaded),
     conflicts,
     skills
   };
 }
 
-async function loadOnscreenSkillIndex(options = {}) {
-  const pattern = String(options.pattern || ONSCREEN_TOP_LEVEL_SKILL_FILE_PATTERN);
-  const skillFiles = await listDiscoveredSkillFiles(pattern);
-  const discoveredSkills = await readSkillFiles(skillFiles);
-  return buildOnscreenSkillIndex(discoveredSkills);
-}
+const loadOnscreenSkillIndex = globalThis.space.extend(
+  import.meta,
+  async function loadOnscreenSkillIndex(options = {}) {
+    const pattern = String(options.pattern || ONSCREEN_TOP_LEVEL_SKILL_FILE_PATTERN);
+    const skillFiles = await listDiscoveredSkillFiles(pattern);
+    const discoveredSkills = await readSkillFiles(skillFiles);
+    return buildOnscreenSkillIndex(discoveredSkills);
+  }
+);
 
 function findConflictingSkillEntry(conflicts, skillPath) {
   return conflicts.find((conflict) => conflict.path === skillPath) || null;
 }
 
-export async function loadOnscreenSkillCatalog() {
-  const index = await loadOnscreenSkillIndex();
-  return index.skills;
-}
-
-export async function buildOnscreenSkillsPromptSection() {
-  const { conflicts, skills } = await loadOnscreenSkillIndex();
-
-  if (!skills.length && !conflicts.length) {
-    return "";
+export const loadOnscreenSkillCatalog = globalThis.space.extend(
+  import.meta,
+  async function loadOnscreenSkillCatalog() {
+    const index = await loadOnscreenSkillIndex();
+    return index.skills;
   }
+);
 
-  return [
-    "## Onscreen Agent Skills",
-    "Skills are loaded on demand.",
-    "Skill ids are relative to a module's `ext/skills/` folder and exclude the trailing `/skill.md`.",
-    "Only top-level skills are listed here by default.",
-    "Load a skill with a JavaScript execution block using `await space.skills.load(\"<path>\")`; top-level `return` is optional for skill loads because loaded skill content is captured automatically.",
-    "Do not rely on a skill's hidden content until you load it.",
-    "Some skills are routing skills and may tell you to load a deeper skill path next.",
-    skills.length ? "Available top-level skills path|name|description:" : "No loadable skills are currently available.",
-    ...buildSkillListLines(skills),
-    ...buildSkillConflictLines(conflicts)
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
+export const buildOnscreenSkillsPromptSection = globalThis.space.extend(
+  import.meta,
+  async function buildOnscreenSkillsPromptSection() {
+    const { conflicts, skills } = await loadOnscreenSkillIndex();
 
-export async function loadOnscreenSkill(path) {
-  const skillPath = normalizeSkillPath(path);
-  const { conflicts, skills } = await loadOnscreenSkillIndex({
-    pattern: buildSkillFilePattern(skillPath)
-  });
-  const conflictingEntry = findConflictingSkillEntry(conflicts, skillPath);
-
-  if (conflictingEntry) {
-    const modules = conflictingEntry.entries.map((entry) => entry.modulePath).join(", ");
-    throw new Error(`Unable to load onscreen skill "${skillPath}": conflicting skill ids in ${modules}`);
-  }
-
-  const skill = skills.find((entry) => entry.path === skillPath);
-
-  if (!skill) {
-    throw new Error(`Unable to load onscreen skill "${skillPath}": skill not found.`);
-  }
-
-  const loadedSkill = {
-    __spaceSkill: true,
-    content: skill.content,
-    filePath: skill.filePath,
-    modulePath: skill.modulePath,
-    name: skill.name,
-    path: skill.path
-  };
-
-  const onSkillLoad = globalThis[ONSCREEN_SKILL_LOAD_HOOK_KEY];
-
-  if (typeof onSkillLoad === "function") {
-    try {
-      onSkillLoad(loadedSkill);
-    } catch (error) {
-      // Skill-load tracking should not prevent the skill itself from loading.
+    if (!skills.length && !conflicts.length) {
+      return "";
     }
-  };
 
-  return loadedSkill;
-}
+    return [
+      "## Onscreen Agent Skills",
+      "Skills are loaded on demand unless they appear in the automatically loaded skills section below.",
+      "Skill ids are relative to a module's `ext/skills/` folder and exclude the trailing `/skill.md`.",
+      "Only top-level skills are listed here by default.",
+      "Load a skill with a JavaScript execution block using `await space.skills.load(\"<path>\")`; top-level `return` is optional for skill loads because loaded skill content is captured automatically.",
+      "Do not rely on a skill's hidden content until you load it or until it appears in the automatically loaded skills section below.",
+      "Some skills are routing skills and may tell you to load a deeper skill path next.",
+      skills.length ? "Available top-level skills path|name|description:" : "No loadable skills are currently available.",
+      ...buildSkillListLines(skills),
+      ...buildSkillConflictLines(conflicts)
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+);
 
-export function installOnscreenSkillRuntime() {
-  globalThis.space.skills = {
-    ...(globalThis.space.skills && typeof globalThis.space.skills === "object" ? globalThis.space.skills : {}),
-    load: loadOnscreenSkill
-  };
-}
+export const buildOnscreenAutomaticallyLoadedSkillsPromptSection = globalThis.space.extend(
+  import.meta,
+  async function buildOnscreenAutomaticallyLoadedSkillsPromptSection() {
+    const { alwaysLoadedSkills } = await loadOnscreenSkillIndex({
+      pattern: ONSCREEN_ALL_SKILL_FILE_PATTERN
+    });
+
+    if (!alwaysLoadedSkills.length) {
+      return "";
+    }
+
+    return [
+      "## Automatically Loaded Skills",
+      "These skill files are already loaded because their frontmatter sets `metadata.always_loaded: true`.",
+      ...alwaysLoadedSkills.flatMap((skill) => {
+        const description = skill.description ? ` | ${skill.description}` : "";
+
+        return [`### ${skill.path} | ${skill.name}${description}`, skill.content];
+      })
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+);
+
+export const loadOnscreenSkill = globalThis.space.extend(
+  import.meta,
+  async function loadOnscreenSkill(path) {
+    const skillPath = normalizeSkillPath(path);
+    const { conflicts, skills } = await loadOnscreenSkillIndex({
+      pattern: buildSkillFilePattern(skillPath)
+    });
+    const conflictingEntry = findConflictingSkillEntry(conflicts, skillPath);
+
+    if (conflictingEntry) {
+      const modules = conflictingEntry.entries.map((entry) => entry.modulePath).join(", ");
+      throw new Error(`Unable to load onscreen skill "${skillPath}": conflicting skill ids in ${modules}`);
+    }
+
+    const skill = skills.find((entry) => entry.path === skillPath);
+
+    if (!skill) {
+      throw new Error(`Unable to load onscreen skill "${skillPath}": skill not found.`);
+    }
+
+    const loadedSkill = {
+      __spaceSkill: true,
+      alwaysLoaded: skill.alwaysLoaded,
+      content: skill.content,
+      filePath: skill.filePath,
+      metadata: skill.metadata,
+      modulePath: skill.modulePath,
+      name: skill.name,
+      path: skill.path
+    };
+
+    const onSkillLoad = globalThis[ONSCREEN_SKILL_LOAD_HOOK_KEY];
+
+    if (typeof onSkillLoad === "function") {
+      try {
+        onSkillLoad(loadedSkill);
+      } catch (error) {
+        // Skill-load tracking should not prevent the skill itself from loading.
+      }
+    }
+
+    return loadedSkill;
+  }
+);
+
+export const installOnscreenSkillRuntime = globalThis.space.extend(
+  import.meta,
+  async function installOnscreenSkillRuntime() {
+    globalThis.space.skills = {
+      ...(globalThis.space.skills && typeof globalThis.space.skills === "object" ? globalThis.space.skills : {}),
+      load: loadOnscreenSkill
+    };
+
+    return globalThis.space.skills;
+  }
+);
