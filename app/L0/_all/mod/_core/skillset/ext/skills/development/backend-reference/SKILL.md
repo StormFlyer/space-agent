@@ -53,7 +53,7 @@ These endpoints are thin wrappers over shared helpers in `server/lib/customware/
 - `/admin` effectively clamps module and extension resolution to `L0`.
 - Frontend HTML extensions resolve through `ext/html/...`.
 - Frontend JS hooks resolve through `ext/js/...`.
-- Frontend modules may also enumerate other extension-owned assets such as `ext/panels/*.yaml` through `extensions_load` when they need the same permission-aware layered override behavior.
+- Frontend modules may also enumerate other extension-owned assets such as `ext/panels/*.yaml` through `file_paths` plus `file_read` when they only need readable logical file discovery and contents. `extensions_load` remains the backend contract for HTML and JS extension resolution, keeping `maxLayer` at the top level, ordered `patterns` groups in the request, and ordered grouped results with matching `patterns` plus resolved `extensions`.
 
 ## Auth And User Storage
 

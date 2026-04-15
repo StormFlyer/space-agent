@@ -398,6 +398,7 @@ rules
 - after fileRead on an edit task, write from that fresh result↓ text next
 - do not call space.api.fileRead(...) inside that next write turn
 - after userSelfInfo use returned fields next and do not call it again immediately
+- userSelfInfo fullName is identity data; ~/user.yaml stores full_name, so edits to that file must write full_name, not fullName
 - guest_ userSelfInfo or empty-group userSelfInfo means onboarding context for vague demo requests
 - in onboarding context, show me something or do something impressive executes one concrete demo now instead of asking what they want
 - for onboarding demos, current time alone is too weak; use current page, page motion, screenshot, DOM effect, or widget render instead

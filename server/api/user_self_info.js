@@ -1,4 +1,5 @@
 import { getRuntimeGroupIndex } from "../lib/customware/group_runtime.js";
+import { getUserCryptoState } from "../lib/auth/user_crypto.js";
 
 export function get(context) {
   const username = String(context.user?.username || "").trim();
@@ -17,10 +18,14 @@ export function get(context) {
     groupIndex && typeof groupIndex.getManagedGroupsForUser === "function"
       ? groupIndex.getManagedGroupsForUser(username)
       : [];
+  const userCryptoState = getUserCryptoState(context.projectRoot, username, context.runtimeParams);
   return {
     fullName: String(userRecord?.fullName || username),
     groups: Array.isArray(groups) ? groups : [],
     managedGroups: Array.isArray(managedGroups) ? managedGroups : [],
+    sessionId: String(context.user?.session?.sessionId || "").trim(),
+    userCryptoKeyId: String(userCryptoState?.keyId || "").trim(),
+    userCryptoState: String(userCryptoState?.status || "missing"),
     username
   };
 }

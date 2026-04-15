@@ -69,6 +69,8 @@ Important rules:
 
 These helpers accept single-path forms and composed batch forms where appropriate.
 
+The current frontend `fileRead(...)` wrapper also coalesces same-tick reads into one backend `file_read` request when possible, then re-slices the results back to each caller. If that combined read fails, it retries the queued entries individually so shorthand paths like `~/...` and optional missing-file callers still behave like standalone reads.
+
 `fileList(...)` also accepts an options object. Use `access: "write"` or `writableOnly: true` when a browser surface needs server-confirmed writable paths. Use `gitRepositories: true` with writable access to list local-history owner roots without exposing `.git` metadata.
 
 ## Batch Semantics
@@ -97,9 +99,9 @@ Current behavior:
 
 ## `file_paths`
 
-`file_paths` is the pattern-discovery endpoint used by systems such as skill discovery.
+`file_paths` is the pattern-discovery endpoint used by systems such as skill discovery and dashboard panel discovery.
 
-It also accepts an optional explicit `maxLayer` filter when a caller needs module-oriented discovery to stay within a firmware or lower-layer ceiling. The current first-party example is the admin agent skill catalog, which resolves readable `mod/*/*/ext/skills/*/SKILL.md` files with `maxLayer=0` so writable customware layers do not influence prompt-facing skill text.
+It also accepts an optional explicit `maxLayer` filter when a caller needs module-oriented discovery to stay within a firmware or lower-layer ceiling. The current first-party examples are the admin agent skill catalog, which resolves readable `mod/*/*/ext/skills/*/SKILL.md` files with `maxLayer=0` so writable customware layers do not influence prompt-facing skill text, and the dashboard panel index, which resolves readable `mod/*/*/ext/panels/*.yaml` files before batch-reading them through `file_read`.
 
 Behavior summary:
 

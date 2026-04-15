@@ -23,6 +23,8 @@ Important notes:
 
 - these are the only explicitly anonymous endpoint families today
 - password login flows through the shared auth challenge/proof service
+- `login_challenge` also reports `userCrypto` bootstrap state; legacy accounts with no `meta/user_crypto.json` receive a one-time provisioning share so the browser can generate the missing wrapped record before final login, while accounts whose wrapped record no longer has any recoverable server share are reported as `invalidated`
+- `login` completes both the auth session and the `userCrypto` bootstrap: it may persist a missing `user_crypto.json` record before issuing the cookie, and successful responses return a backend `sessionId` plus the `userCrypto` payload needed to unlock the current browser session
 - `guest_create` creates a guest `L2` user only when runtime config allows guest accounts
 - in clustered runtime, login challenges are coordinated through the primary-only `login_challenge` area of the unified state system while workers still validate cookies and write `logins.json`
 
@@ -55,6 +57,7 @@ Important runtime endpoints:
 - `debug_path_index`
 - `password_generate`
 - `password_change`
+- `user_crypto_bootstrap`
 - `user_self_info`
 
 `extensions_load`:
@@ -64,8 +67,9 @@ Important runtime endpoints:
 - is the shared backend for frontend extension loading
 - reads the replicated shared-state shards needed for the caller's visible module owners instead of scanning the full watchdog path index
 - receives grouped lookup batches from the frontend; the batching policy itself lives in the frontend loader, not in the endpoint contract
+- keeps `maxLayer` at the call level and grouped `patterns` inside ordered request entries, then returns grouped results in that same order with the matching normalized `patterns` plus resolved `extensions`
 - first-party HTML anchors and JS hooks use it for `ext/html/...` and `ext/js/...`
-- first-party panel indexing also uses it to enumerate `ext/panels/*.yaml` manifests while still honoring readable-layer permissions and same-path overrides
+- first-party metadata workflows that only need readable logical file paths, such as dashboard panel manifests, should prefer `file_paths` plus `file_read` instead of routing through `extensions_load`
 
 `debug_path_index`:
 
@@ -77,8 +81,9 @@ Important runtime endpoints:
 `user_self_info`:
 
 - is the canonical frontend identity snapshot
-- returns `{ username, fullName, groups, managedGroups }`
+- returns `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }`
 - should be used by browser code to infer writable roots instead of relying on a broader serialized permission blob
+- also gives `_core/user_crypto` the backend `sessionId` and current key state it needs to restore or invalidate session-scoped browser decryption state
 
 `password_generate`:
 
@@ -90,7 +95,14 @@ Important runtime endpoints:
 
 - is authenticated and applies only to the current user
 - validates the current password through the auth service before generating the replacement sealed verifier
-- rewrites `meta/password.json`, clears stored sessions, and clears the current browser cookie so the frontend can return to `/login`
+- rewrites `meta/password.json`, rewraps `meta/user_crypto.json` when the current account has ready browser crypto, clears stored sessions, and clears the current browser cookie so the frontend can return to `/login`
+
+`user_crypto_bootstrap`:
+
+- is an authenticated recovery endpoint for the current user's browser session
+- returns the current `userCrypto` state
+- when the state is `missing`, it can return a provisioning share for that authenticated session and later accept the wrapped record generated in the browser
+- exists so the first authenticated app load can self-heal a missing `userCrypto` record instead of requiring a second login
 
 ## Health Helper
 

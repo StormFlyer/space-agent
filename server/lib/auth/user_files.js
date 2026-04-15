@@ -13,6 +13,7 @@ const USER_META_DIRNAME = "meta";
 const USER_CONFIG_FILENAME = "user.yaml";
 const USER_LOGINS_FILENAME = "logins.json";
 const USER_PASSWORD_FILENAME = "password.json";
+const USER_CRYPTO_FILENAME = "user_crypto.json";
 
 function normalizeUsername(value) {
   return normalizeEntityId(value);
@@ -129,6 +130,30 @@ function writeUserLogins(projectRoot, username, logins, runtimeParams = null) {
   return filePath;
 }
 
+function readUserCryptoRecord(projectRoot, username, runtimeParams = null) {
+  const filePath = buildUserAbsolutePath(
+    projectRoot,
+    username,
+    `${USER_META_DIRNAME}/${USER_CRYPTO_FILENAME}`,
+    runtimeParams
+  );
+  return readJsonObject(filePath, {});
+}
+
+function writeUserCryptoRecord(projectRoot, username, record, runtimeParams = null) {
+  const filePath = buildUserAbsolutePath(
+    projectRoot,
+    username,
+    `${USER_META_DIRNAME}/${USER_CRYPTO_FILENAME}`,
+    runtimeParams
+  );
+  fs.mkdirSync(buildUserAbsolutePath(projectRoot, username, USER_META_DIRNAME, runtimeParams), {
+    recursive: true
+  });
+  fs.writeFileSync(filePath, `${JSON.stringify(record || {}, null, 2)}\n`, "utf8");
+  return filePath;
+}
+
 function ensureUserStructure(projectRoot, username, runtimeParams = null) {
   const userDir = buildUserAbsolutePath(projectRoot, username, "", runtimeParams);
   const metaDir = buildUserAbsolutePath(projectRoot, username, USER_META_DIRNAME, runtimeParams);
@@ -144,6 +169,7 @@ function ensureUserStructure(projectRoot, username, runtimeParams = null) {
 
 export {
   USER_CONFIG_FILENAME,
+  USER_CRYPTO_FILENAME,
   USER_LOGINS_FILENAME,
   USER_META_DIRNAME,
   USER_PASSWORD_FILENAME,
@@ -152,9 +178,11 @@ export {
   ensureUserStructure,
   normalizeUsername,
   readUserConfig,
+  readUserCryptoRecord,
   readUserLogins,
   readUserPasswordVerifier,
   writeUserConfig,
+  writeUserCryptoRecord,
   writeUserLogins,
   writeUserPasswordVerifier
 };

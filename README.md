@@ -10,7 +10,7 @@
 
 <p align="center">
 <br>
-  <a href="https://space-agent.ai"><img alt="Try Live Now!" height="64" src="https://img.shields.io/badge/Try%20Live%20Now%21-00D9FF?style=for-the-badge&labelColor=07111F&color=00D9FF" /></a>
+  <a href="https://space-agent.ai"><img alt="Try Live Now!" src="./.github/readme-try-live-now.svg" /></a>
   <br />
   <br />
   <a href="https://github.com/agent0ai/space-agent/releases/latest"><img alt="Run local App" height="50" src="https://img.shields.io/badge/Run%20local%20App-59F0A8?style=for-the-badge&labelColor=07111F&color=59F0A8" /></a>
@@ -33,62 +33,62 @@
 
 ## Why Space Agent Is Different
 
-<table>
+<table width="100%" border="0" cellpadding="0" cellspacing="0">
   <tr>
-    <td width="50%">
-      <h3>The agent reshapes the interface</h3>
-      <p>Ask for a page, tool, widget, or workflow and the agent can build it straight into the running workspace while you work.</p>
+    <td valign="top" width="50%">
+      <strong>The agent reshapes the interface</strong><br />
+      Ask for a page, tool, widget, or workflow and the agent can build it straight into the running workspace while you work.
     </td>
-    <td width="50%">
-      <h3>Endless possibilities</h3>
-      <p>The agent is not trapped inside a fixed product surface. It can develop the capabilities it needs from within the system itself and keep extending the Space toward whatever the user can imagine.</p>
+    <td valign="top" width="50%">
+      <strong>Endless possibilities</strong><br />
+      The agent is not trapped inside a fixed product surface. It can develop the capabilities it needs from within the system itself and keep extending the Space toward whatever the user can imagine.
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <img src="./packaging/resources/icons/source/space-agent-icon-256.webp" alt="Space Agent app icon" width="120" />
     </td>
-    <td width="50%">
-      <h3>The agent lives in the frontend runtime</h3>
-      <p>Space Agent runs in the browser layer itself, whether you open it in a tab or through the desktop app, so the agent can work directly with the same framework, modules, spaces, and UI it is reshaping.</p>
+    <td valign="top" width="50%">
+      <strong>The agent lives in the frontend runtime</strong><br />
+      Space Agent runs in the browser layer itself, whether you open it in a tab or through the desktop app, so the agent can work directly with the same framework, modules, spaces, and UI it is reshaping.
     </td>
   </tr>
   <tr>
-    <td width="50%">
-      <h3>Text-based agent</h3>
-      <p>New capabilities can live in simple <code>SKILL.md</code> files that the agent can write and extend itself in plain text.</p>
+    <td valign="top" width="50%">
+      <strong>Text-based agent</strong><br />
+      New capabilities can live in simple <code>SKILL.md</code> files that the agent can write and extend itself in plain text.
     </td>
-    <td width="50%">
-      <h3>Token-efficient execution</h3>
-      <p>No bulky tool-call JSON. When action is needed, the agent can stay in plain text and plain JavaScript inside the same message.</p>
+    <td valign="top" width="50%">
+      <strong>Token-efficient execution</strong><br />
+      No bulky tool-call JSON. When action is needed, the agent can stay in plain text and plain JavaScript inside the same message.
     </td>
   </tr>
   <tr>
-    <td width="50%">
-      <h3>Puzzle-piece modularity</h3>
-      <p>The core stays small. Most of Space Agent is made of modular pieces that can be added, removed, or swapped cleanly instead of being welded into one rigid app.</p>
+    <td valign="top" width="50%">
+      <strong>Puzzle-piece modularity</strong><br />
+      The core stays small. Most of Space Agent is made of modular pieces that can be added, removed, or swapped cleanly instead of being welded into one rigid app.
     </td>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <img src="./app/L0/_all/mod/_core/onscreen_agent/res/helmet_no_bg_256.webp" alt="Space Agent helmet" width="150" />
     </td>
   </tr>
   <tr>
-    <td width="50%">
-      <h3>Personal to hierarchical</h3>
-      <p>Use Space Agent as a completely personal assistant, or organize it into a hierarchical system of users and groups as the scope grows.</p>
+    <td valign="top" width="50%">
+      <strong>Personal to hierarchical</strong><br />
+      Use Space Agent as a completely personal assistant, or organize it into a hierarchical system of users and groups as the scope grows.
     </td>
-    <td width="50%">
-      <h3>Per-user work, group sharing</h3>
-      <p>Users can build in their own layer without affecting anyone else, then groups can share tools, workflows, and behavior across teams when they are ready.</p>
+    <td valign="top" width="50%">
+      <strong>Per-user work, group sharing</strong><br />
+      Users can build in their own layer without affecting anyone else, then groups can share tools, workflows, and behavior across teams when they are ready.
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <img src="./app/L0/_all/mod/_core/admin/res/astronaut_no_bg.webp" alt="Space Agent astronaut" width="170" />
     </td>
-    <td width="50%">
-      <h3>Persistent admin and time travel</h3>
-      <p>When something breaks, admin mode gives you a stable control plane, and Git-backed history lets you roll back user or group changes without taking everyone down with you.</p>
+    <td valign="top" width="50%">
+      <strong>Persistent admin and time travel</strong><br />
+      When something breaks, admin mode gives you a stable control plane, and Git-backed history lets you roll back user or group changes without taking everyone down with you.
     </td>
   </tr>
 </table>

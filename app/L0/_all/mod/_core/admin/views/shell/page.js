@@ -5,6 +5,7 @@ const tabs = [
   { id: "dashboard", icon: "space_dashboard", label: "Dashboard" },
   { id: "agent", avatarPath: ADMIN_AGENT_AVATAR_PATH, label: "Agent" },
   { id: "files", icon: "folder_open", label: "Files" },
+  { id: "time_travel", icon: "history", label: "Time Travel" },
   { id: "modules", icon: "package_2", label: "Modules" }
 ];
 
@@ -13,6 +14,7 @@ const ACTIVE_TAB_STORAGE_KEY = "space.admin.activeTab";
 const quickActions = [
   { id: "open-agent", avatarPath: ADMIN_AGENT_AVATAR_PATH, label: "Admin agent", targetTab: "agent" },
   { id: "open-files", icon: "folder_open", label: "Files", targetTab: "files" },
+  { id: "open-time-travel", icon: "history", label: "Time Travel", targetTab: "time_travel" },
   { id: "open-modules", icon: "package_2", label: "Modules", targetTab: "modules" }
 ];
 

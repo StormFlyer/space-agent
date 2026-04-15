@@ -24,12 +24,21 @@ import {
   writeUserLogins,
   writeUserPasswordVerifier
 } from "./user_files.js";
+import {
+  buildClientUserCryptoRecord,
+  createUserCryptoServerShare,
+  getUserCryptoState,
+  provisionUserCrypto,
+  readUserCryptoServerShare,
+  USER_CRYPTO_STATUS_READY
+} from "./user_crypto.js";
 import { LOGIN_CHALLENGE_AREA } from "../../runtime/state_areas.js";
 
 const SESSION_COOKIE_NAME = "space_session";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,200}$/u;
 const REMOTE_ADDRESS_MAX_LENGTH = 256;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{16,200}$/u;
 const SESSION_SIGNATURE_PREFIX = "space-session-record-v1";
 const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,200}$/u;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -113,12 +122,21 @@ function normalizeSessionToken(value) {
   return SESSION_TOKEN_PATTERN.test(sessionToken) ? sessionToken : "";
 }
 
+function normalizeSessionId(value) {
+  const sessionId = String(value || "").trim();
+  return SESSION_ID_PATTERN.test(sessionId) ? sessionId : "";
+}
+
 function createChallengeToken() {
   return randomBytes(24).toString("base64url");
 }
 
 function createSessionToken() {
   return randomBytes(32).toString("base64url");
+}
+
+function createSessionId() {
+  return randomBytes(24).toString("base64url");
 }
 
 function createStateBackedLoginChallengeStore(stateSystem) {
@@ -212,8 +230,8 @@ function createSessionVerifier(sessionToken, authKeys) {
   );
 }
 
-function buildSessionSignaturePayload(fields = {}) {
-  return JSON.stringify({
+function buildSessionSignaturePayload(fields = {}, options = {}) {
+  const payload = {
     createdAt: String(fields.createdAt || ""),
     expiresAt: String(fields.expiresAt || ""),
     prefix: SESSION_SIGNATURE_PREFIX,
@@ -221,13 +239,19 @@ function buildSessionSignaturePayload(fields = {}) {
     sessionVerifier: String(fields.sessionVerifier || ""),
     userAgent: String(fields.userAgent || ""),
     username: String(fields.username || "")
-  });
+  };
+
+  if (options.includeSessionId !== false) {
+    payload.sessionId = String(fields.sessionId || "");
+  }
+
+  return JSON.stringify(payload);
 }
 
-function createSessionSignature(fields, authKeys) {
+function createSessionSignature(fields, authKeys, options = {}) {
   return encodeBase64Url(
     createHmac("sha256", getSessionHmacKey(authKeys))
-      .update(buildSessionSignaturePayload(fields))
+      .update(buildSessionSignaturePayload(fields, options))
       .digest()
   );
 }
@@ -265,6 +289,7 @@ function normalizeStoredSessionRecord(options = {}) {
   const createdAt = normalizeIsoDate(session.createdAt);
   const expiresAt = normalizeIsoDate(session.expiresAt);
   const remoteAddress = normalizeHeaderValue(session.remoteAddress, REMOTE_ADDRESS_MAX_LENGTH);
+  const sessionId = normalizeSessionId(session.sessionId);
   const signature = String(session.signature || "").trim();
   const userAgent = normalizeHeaderValue(session.userAgent, USER_AGENT_MAX_LENGTH);
 
@@ -283,11 +308,15 @@ function normalizeStoredSessionRecord(options = {}) {
       createdAt,
       expiresAt,
       remoteAddress,
+      sessionId,
       sessionVerifier,
       userAgent,
       username
     },
-    options.authKeys
+    options.authKeys,
+    {
+      includeSessionId: Boolean(sessionId)
+    }
   );
 
   if (!isSafeEqualBase64Url(expectedSignature, signature)) {
@@ -299,6 +328,7 @@ function normalizeStoredSessionRecord(options = {}) {
     expiresAt,
     loginsPath: String(session.loginsPath || ""),
     remoteAddress,
+    sessionId,
     sessionVerifier,
     signature,
     userAgent,
@@ -306,7 +336,7 @@ function normalizeStoredSessionRecord(options = {}) {
   };
 }
 
-function createPersistedSessionRecord({ req, requestInfo, sessionVerifier, username }, authKeys) {
+function createPersistedSessionRecord({ req, requestInfo, sessionId, sessionVerifier, username }, authKeys) {
   const resolvedRequestInfo = resolveRequestInfo({
     req,
     requestInfo
@@ -325,12 +355,14 @@ function createPersistedSessionRecord({ req, requestInfo, sessionVerifier, usern
         createdAt,
         expiresAt,
         remoteAddress,
+        sessionId,
         sessionVerifier,
         userAgent,
         username
       },
       authKeys
     ),
+    sessionId,
     userAgent
   };
 }
@@ -361,6 +393,7 @@ function sanitizeStoredLogins(logins, username, authKeys) {
       createdAt: normalizedSession.createdAt,
       expiresAt: normalizedSession.expiresAt,
       remoteAddress: normalizedSession.remoteAddress,
+      sessionId: normalizedSession.sessionId,
       signature: normalizedSession.signature,
       userAgent: normalizedSession.userAgent
     };
@@ -404,6 +437,24 @@ export function createAuthService(options = {}) {
       readUserPasswordVerifier(projectRoot, username, runtimeParams),
       authKeys
     );
+  }
+
+  function readCurrentUserCryptoState(username) {
+    return getUserCryptoState(projectRoot, username, runtimeParams);
+  }
+
+  function buildLoginUserCryptoPayload(username) {
+    const userCryptoState = readCurrentUserCryptoState(username);
+
+    return {
+      keyId: userCryptoState.keyId,
+      record: buildClientUserCryptoRecord(userCryptoState.record),
+      serverShare:
+        userCryptoState.status === USER_CRYPTO_STATUS_READY
+          ? readUserCryptoServerShare(projectRoot, username)
+          : "",
+      state: userCryptoState.status
+    };
   }
 
   function resolveUserFromCookies(cookies = {}, headers = {}) {
@@ -493,6 +544,9 @@ export function createAuthService(options = {}) {
       normalizedUsername && normalizedClientNonce && userRecord?.hasPassword
         ? readCurrentPasswordVerifier(normalizedUsername)
         : null;
+    const userCryptoState = verifier ? readCurrentUserCryptoState(normalizedUsername) : null;
+    const userCryptoProvisioningShare =
+      userCryptoState?.status === "missing" ? createUserCryptoServerShare() : "";
 
     if (!normalizedUsername || !normalizedClientNonce || !verifier) {
       throw new Error("Invalid username or password.");
@@ -507,6 +561,8 @@ export function createAuthService(options = {}) {
       clientNonce: normalizedClientNonce,
       createdAtMs,
       serverNonce,
+      userCryptoProvisioningShare,
+      userCryptoStatus: userCryptoState?.status || "missing",
       userAgent: resolvedRequestInfo.userAgent,
       username: normalizedUsername
     });
@@ -516,11 +572,16 @@ export function createAuthService(options = {}) {
       iterations: Number(verifier.iterations),
       passwordScheme: verifier.scheme,
       salt: verifier.salt,
-      serverNonce
+      serverNonce,
+      userCrypto: {
+        provisioningShare: userCryptoProvisioningShare,
+        record: buildClientUserCryptoRecord(userCryptoState?.record),
+        state: userCryptoState?.status || "missing"
+      }
     };
   }
 
-  async function completeLogin({ challengeToken, clientProof, req, requestInfo }) {
+  async function completeLogin({ challengeToken, clientProof, req, requestInfo, userCryptoProvisioning }) {
     if (isSingleUserApp(runtimeParams)) {
       throw new Error("Password login is disabled in single-user mode.");
     }
@@ -562,7 +623,27 @@ export function createAuthService(options = {}) {
       throw new Error("Invalid username or password.");
     }
 
+    if (challenge.userCryptoStatus === "missing") {
+      const provisioningRecord =
+        userCryptoProvisioning &&
+        typeof userCryptoProvisioning === "object" &&
+        !Array.isArray(userCryptoProvisioning)
+          ? userCryptoProvisioning.record || userCryptoProvisioning
+          : null;
+
+      if (!provisioningRecord || !challenge.userCryptoProvisioningShare) {
+        throw new Error("Login requires user crypto provisioning. Try again.");
+      }
+
+      provisionUserCrypto(projectRoot, challenge.username, {
+        record: provisioningRecord,
+        runtimeParams,
+        serverShare: challenge.userCryptoProvisioningShare
+      });
+    }
+
     const sessionToken = createSessionToken();
+    const sessionId = createSessionId();
     const sessionVerifier = createSessionVerifier(sessionToken, authKeys);
     const logins = sanitizeStoredLogins(
       readUserLogins(projectRoot, challenge.username, runtimeParams),
@@ -573,6 +654,7 @@ export function createAuthService(options = {}) {
     logins[sessionVerifier] = createPersistedSessionRecord(
       {
         requestInfo: resolvedRequestInfo,
+        sessionId,
         sessionVerifier,
         username: challenge.username
       },
@@ -590,7 +672,9 @@ export function createAuthService(options = {}) {
 
     return {
       serverSignature: loginResult.serverSignature,
+      sessionId,
       sessionToken,
+      userCrypto: buildLoginUserCryptoPayload(challenge.username),
       username: challenge.username
     };
   }
@@ -631,7 +715,7 @@ export function createAuthService(options = {}) {
     return true;
   }
 
-  function changePassword({ currentPassword, newPassword, requestUser }) {
+  function changePassword({ currentPassword, newPassword, requestUser, userCryptoRecord }) {
     if (isSingleUserApp(runtimeParams)) {
       throw createStatusError("Password login is disabled in single-user mode.", 403);
     }
@@ -639,13 +723,21 @@ export function createAuthService(options = {}) {
     const authenticatedUser = getAuthenticatedUser(requestUser);
     const normalizedUsername = normalizeEntityId(authenticatedUser.username);
     const verifier = normalizedUsername ? readCurrentPasswordVerifier(normalizedUsername) : null;
+    const userCryptoState = normalizedUsername ? readCurrentUserCryptoState(normalizedUsername) : null;
 
     if (!verifier || !verifyPassword(currentPassword, verifier)) {
       throw createStatusError("Current password is incorrect.", 401);
     }
 
+    if (userCryptoState?.status === USER_CRYPTO_STATUS_READY && !userCryptoRecord) {
+      throw createStatusError("Current login must rewrap user crypto before changing the password.", 400);
+    }
+
     setUserPassword(projectRoot, normalizedUsername, newPassword, {
-      runtimeParams
+      invalidateUserCrypto: false,
+      runtimeParams,
+      userCryptoRecord:
+        userCryptoState?.status === USER_CRYPTO_STATUS_READY ? userCryptoRecord : null
     });
 
     return {

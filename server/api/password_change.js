@@ -51,7 +51,8 @@ export async function post(context) {
       context.auth.changePassword({
         currentPassword: payload.currentPassword,
         newPassword: payload.newPassword,
-        requestUser: context.user
+        requestUser: context.user,
+        userCryptoRecord: payload.userCryptoRecord
       })
     );
 

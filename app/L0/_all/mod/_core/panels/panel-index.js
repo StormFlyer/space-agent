@@ -4,8 +4,10 @@ import {
 } from "/mod/_core/visual/icons/material-symbols.js";
 import { normalizeRoutePath } from "/mod/_core/router/route-path.js";
 
-const PANEL_EXTENSION_POINT = "panels";
 const PANEL_EXTENSION_FILTERS = Object.freeze(["*.yaml", "*.yml"]);
+const PANEL_FILE_PATTERNS = Object.freeze(
+  PANEL_EXTENSION_FILTERS.map((filter) => `mod/*/*/ext/panels/${filter}`)
+);
 const DEFAULT_PANEL_ICON = "web";
 const DEFAULT_PANEL_COLOR = "#94bcff";
 
@@ -16,8 +18,12 @@ function getRuntime() {
     throw new Error("Space runtime is not available.");
   }
 
-  if (!runtime.api || typeof runtime.api.call !== "function") {
-    throw new Error("space.api.call is not available.");
+  if (
+    !runtime.api ||
+    typeof runtime.api.call !== "function" ||
+    typeof runtime.api.fileRead !== "function"
+  ) {
+    throw new Error("space.api.call(...) or space.api.fileRead(...) is not available.");
   }
 
   if (
@@ -120,6 +126,23 @@ function parseManifestRequestPath(requestPath) {
   };
 }
 
+function parseDiscoveredPanelManifestFile(filePath) {
+  const normalizedFilePath = String(filePath || "").trim();
+  const match = normalizedFilePath.match(/^L[0-2]\/[^/]+\/mod\/([^/]+)\/([^/]+)\/ext\/panels\/(.+\.(?:ya?ml))$/iu);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    filePath: normalizedFilePath,
+    id: normalizedFilePath,
+    manifestName: match[3],
+    manifestPath: normalizedFilePath,
+    modulePath: `/mod/${match[1]}/${match[2]}`
+  };
+}
+
 export function normalizePanelManifest(manifest = {}, options = {}) {
   const normalizedManifest =
     manifest && typeof manifest === "object" && !Array.isArray(manifest)
@@ -157,35 +180,63 @@ export function normalizePanelManifest(manifest = {}, options = {}) {
   };
 }
 
-async function listPanelManifestPaths() {
+async function listPanelManifestFiles() {
   const runtime = getRuntime();
-  const response = await runtime.api.call("extensions_load", {
+  const response = await runtime.api.call("file_paths", {
     body: {
-      extension_point: PANEL_EXTENSION_POINT,
-      filters: [...PANEL_EXTENSION_FILTERS]
+      patterns: [...PANEL_FILE_PATTERNS]
     },
     method: "POST"
   });
+  const matchedPaths = PANEL_FILE_PATTERNS.flatMap((pattern) =>
+    Array.isArray(response?.[pattern]) ? response[pattern] : []
+  );
+  const effectivePanelFiles = new Map();
 
-  return Array.isArray(response?.extensions)
-    ? response.extensions.filter((value) => typeof value === "string" && value.trim())
-    : [];
+  matchedPaths.forEach((matchedPath) => {
+    const panelFile = parseDiscoveredPanelManifestFile(matchedPath);
+
+    if (!panelFile) {
+      return;
+    }
+
+    effectivePanelFiles.set(`${panelFile.modulePath}|${panelFile.manifestName}`, panelFile);
+  });
+
+  return [...effectivePanelFiles.values()].sort((left, right) =>
+    left.modulePath.localeCompare(right.modulePath) ||
+    left.manifestName.localeCompare(right.manifestName) ||
+    left.filePath.localeCompare(right.filePath)
+  );
 }
 
 export async function loadPanelManifest(manifestPath) {
   const runtime = getRuntime();
-  const response = await fetch(manifestPath, {
-    credentials: "same-origin"
-  });
+  const normalizedManifestPath = String(manifestPath || "").trim();
+  const discoveredManifestFile = parseDiscoveredPanelManifestFile(normalizedManifestPath);
+  let manifestSource = "";
 
-  if (!response.ok) {
-    throw new Error(`Unable to read ${manifestPath}: ${response.status} ${response.statusText}`);
+  if (discoveredManifestFile) {
+    const response = await runtime.api.fileRead(discoveredManifestFile.filePath);
+    manifestSource = String(response?.content || "");
+  } else {
+    const response = await fetch(normalizedManifestPath, {
+      credentials: "same-origin"
+    });
+
+    if (!response.ok) {
+      throw new Error(`Unable to read ${normalizedManifestPath}: ${response.status} ${response.statusText}`);
+    }
+
+    manifestSource = await response.text();
   }
 
-  const manifestSource = await response.text();
   const parsedManifest = runtime.utils.yaml.parse(manifestSource);
 
-  return normalizePanelManifest(parsedManifest, parseManifestRequestPath(manifestPath));
+  return normalizePanelManifest(
+    parsedManifest,
+    discoveredManifestFile || parseManifestRequestPath(normalizedManifestPath)
+  );
 }
 
 function comparePanels(left, right) {
@@ -193,13 +244,28 @@ function comparePanels(left, right) {
 }
 
 export async function listPanels() {
-  const manifestPaths = await listPanelManifestPaths();
+  const runtime = getRuntime();
+  const manifestFiles = await listPanelManifestFiles();
+
+  if (!manifestFiles.length) {
+    return [];
+  }
+
+  const result = await runtime.api.fileRead({
+    files: manifestFiles.map((manifestFile) => manifestFile.filePath)
+  });
+  const files = Array.isArray(result?.files) ? result.files : [];
+  const fileMap = new Map(
+    files.map((file) => [String(file?.path || ""), String(file?.content || "")])
+  );
   const panels = await Promise.all(
-    manifestPaths.map(async (manifestPath) => {
+    manifestFiles.map(async (manifestFile) => {
       try {
-        return await loadPanelManifest(manifestPath);
+        const manifestSource = fileMap.get(manifestFile.filePath) || "";
+        const parsedManifest = runtime.utils.yaml.parse(manifestSource);
+        return normalizePanelManifest(parsedManifest, manifestFile);
       } catch (error) {
-        console.error(`[panels] loadPanelManifest failed for ${manifestPath}`, error);
+        console.error(`[panels] loadPanelManifest failed for ${manifestFile.filePath}`, error);
         return null;
       }
     })

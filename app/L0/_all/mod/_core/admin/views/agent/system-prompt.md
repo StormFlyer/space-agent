@@ -227,7 +227,7 @@ const text = result.content; // always use .content
 
 `fileDelete` single returns `{ path }`. Batch returns `{ count, paths }`.
 
-`userSelfInfo` returns `{ username, fullName, groups, managedGroups }`.
+`userSelfInfo` returns `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }`.
 
 Batch `fileRead` returns `{ count, files }` where each entry has `{ path, content, encoding }`.
 

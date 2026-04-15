@@ -1214,14 +1214,23 @@ function readMountedWidgetHtmlEnvelope({ spaceId = "", widgetId = "", full = fal
   };
 }
 
-async function buildWidgetToolResult(baseResult = {}, { operationLabel = "widget operation", spaceId = "", widgetId = "" } = {}) {
+async function buildWidgetToolResult(
+  baseResult = {},
+  { operationLabel = "widget operation", spaceId = "", updateTransient = true, widgetId = "" } = {}
+) {
   const nextResult = baseResult && typeof baseResult === "object" ? { ...baseResult } : {};
   const normalizedSpaceId = normalizeOptionalSpaceId(spaceId || nextResult.space?.id);
   const normalizedWidgetId = normalizeOptionalWidgetId(widgetId || nextResult.widgetId);
   const widgetPath =
     nextResult.widgetPath || (normalizedSpaceId && normalizedWidgetId ? buildSpaceWidgetFilePath(normalizedSpaceId, normalizedWidgetId) : "");
+  const shouldUpdateTransient = updateTransient !== false;
 
-  if ((typeof nextResult.widgetText !== "string" || !nextResult.widgetText) && normalizedSpaceId && normalizedWidgetId) {
+  if (
+    shouldUpdateTransient &&
+    (typeof nextResult.widgetText !== "string" || !nextResult.widgetText) &&
+    normalizedSpaceId &&
+    normalizedWidgetId
+  ) {
     try {
       nextResult.widgetText = await readWidgetFromStorage({
         spaceId: normalizedSpaceId,
@@ -1233,23 +1242,31 @@ async function buildWidgetToolResult(baseResult = {}, { operationLabel = "widget
   }
 
   const widgetRender = getWidgetRenderCheckForSpace(normalizedSpaceId, normalizedWidgetId);
-  const widgetView = readMountedWidgetHtmlEnvelope({
-    full: false,
-    spaceId: normalizedSpaceId,
-    widgetId: normalizedWidgetId,
-    widgetRender
-  });
-  const widgetText = typeof nextResult.widgetText === "string" ? nextResult.widgetText : "";
-  const transientUpdated = updateCurrentWidgetTransientSection({
-    spaceId: normalizedSpaceId,
-    widgetId: normalizedWidgetId,
-    widgetPath,
-    widgetStatusText: "",
-    widgetHtml: widgetView.html,
-    widgetHtmlAvailable: widgetView.available,
-    widgetHtmlUnavailableReason: widgetView.unavailableReason,
-    widgetText
-  });
+  const widgetView = shouldUpdateTransient
+    ? readMountedWidgetHtmlEnvelope({
+        full: false,
+        spaceId: normalizedSpaceId,
+        widgetId: normalizedWidgetId,
+        widgetRender
+      })
+    : {
+        available: false,
+        html: "",
+        unavailableReason: ""
+      };
+  const widgetText = shouldUpdateTransient && typeof nextResult.widgetText === "string" ? nextResult.widgetText : "";
+  const transientUpdated = shouldUpdateTransient
+    ? updateCurrentWidgetTransientSection({
+        spaceId: normalizedSpaceId,
+        widgetId: normalizedWidgetId,
+        widgetPath,
+        widgetStatusText: "",
+        widgetHtml: widgetView.html,
+        widgetHtmlAvailable: widgetView.available,
+        widgetHtmlUnavailableReason: widgetView.unavailableReason,
+        widgetText
+      })
+    : false;
   const widgetStatusText = formatWidgetOperationStatusText(normalizedWidgetId, operationLabel, widgetRender, {
     transientUpdated
   });
@@ -2480,7 +2497,9 @@ function createWidgetCardSkeleton(spaceRecord, widgetId, layoutEntry) {
   reloadButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    void activeSpacesStore?.reloadWidget(widgetId);
+    void activeSpacesStore?.reloadWidget(widgetId, {
+      updateTransient: false
+    });
   });
   resizeHandle.addEventListener("pointerdown", (event) => {
     activeSpacesStore?.beginWidgetResize(event, widgetId);
@@ -2556,8 +2575,51 @@ function buildWidgetLayoutEntry(resolvedLayout, widgetId) {
   };
 }
 
-function tryCompileRendererMethod(rendererSource) {
-  const methodObject = Function(`return ({ ${rendererSource} });`)();
+function slugifyRendererSourceSegment(value, fallback = "item") {
+  const normalizedValue = String(value || "")
+    .trim()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase();
+  const slug = normalizedValue
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+
+  return slug || fallback;
+}
+
+function hashRendererSource(value) {
+  const text = String(value || "");
+  let hash = 5381;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ text.charCodeAt(index);
+    hash >>>= 0;
+  }
+
+  return hash.toString(36);
+}
+
+// Give widget renderers a stable virtual filename so DevTools can show
+// runtime frames against the renderer source instead of the page shell.
+function buildWidgetRendererSourceUrl(spaceId, widgetId, rendererSource) {
+  const spaceSegment = slugifyRendererSourceSegment(spaceId, "space");
+  const widgetSegment = slugifyRendererSourceSegment(widgetId, "widget");
+  const rendererFingerprint = `${String(rendererSource || "").length.toString(36)}-${hashRendererSource(rendererSource)}`;
+
+  return `space-widget-${spaceSegment}-${widgetSegment}-${rendererFingerprint}.renderer.js`;
+}
+
+function evaluateWidgetRendererExpression(rendererSource, sourceUrl) {
+  return (0, eval)(`(${rendererSource}\n)\n//# sourceURL=${sourceUrl}`);
+}
+
+function evaluateWidgetRendererMethodObject(rendererSource, sourceUrl) {
+  return (0, eval)(`({ ${rendererSource}\n})\n//# sourceURL=${sourceUrl}`);
+}
+
+function tryCompileRendererMethod(rendererSource, sourceUrl) {
+  const methodObject = evaluateWidgetRendererMethodObject(rendererSource, sourceUrl);
 
   if (typeof methodObject?.renderer === "function") {
     return methodObject.renderer;
@@ -2572,8 +2634,9 @@ function tryCompileRendererMethod(rendererSource) {
   return null;
 }
 
-function compileWidgetRenderer(widgetRecord, widgetId) {
+function compileWidgetRenderer(spaceRecord, widgetRecord, widgetId) {
   const rendererSource = normalizeRendererSource(widgetRecord?.rendererSource || "");
+  const sourceUrl = buildWidgetRendererSourceUrl(spaceRecord?.id, widgetId, rendererSource);
 
   if (!rendererSource) {
     throw new Error(`Widget "${widgetId}" is missing a renderer function.`);
@@ -2582,10 +2645,10 @@ function compileWidgetRenderer(widgetRecord, widgetId) {
   let compiledRenderer = null;
 
   try {
-    compiledRenderer = Function(`return (${rendererSource});`)();
+    compiledRenderer = evaluateWidgetRendererExpression(rendererSource, sourceUrl);
   } catch (directCompileError) {
     try {
-      compiledRenderer = tryCompileRendererMethod(rendererSource);
+      compiledRenderer = tryCompileRendererMethod(rendererSource, sourceUrl);
     } catch {
       throw directCompileError;
     }
@@ -2612,7 +2675,7 @@ async function renderWidgetCard(spaceRecord, widgetId, skeleton, loadToken, layo
   const storedSize = getEffectiveWidgetSize(spaceRecord, widgetId);
   const size = layoutEntry?.renderedSize || getRenderedWidgetSize(storedSize, Boolean(layoutEntry?.minimized));
   const context = createWidgetContext(spaceRecord, widgetId, size, layoutEntry);
-  const renderer = compileWidgetRenderer(widgetRecord, widgetId);
+  const renderer = compileWidgetRenderer(spaceRecord, widgetRecord, widgetId);
 
   skeleton.card.classList.toggle("is-minimized", Boolean(layoutEntry?.minimized));
   skeleton.minimizeButton.textContent = layoutEntry?.minimized ? "+" : "-";
@@ -4163,6 +4226,7 @@ const spacesModel = {
       {
         operationLabel: "reloadWidget(...)",
         spaceId: this.currentSpace.id,
+        updateTransient: options.updateTransient !== false,
         widgetId
       }
     );

@@ -175,6 +175,9 @@
  *   fullName: string,
  *   groups: string[],
  *   managedGroups: string[],
+ *   sessionId: string,
+ *   userCryptoKeyId: string,
+ *   userCryptoState: string,
  *   username: string
  * }} UserSelfInfoResult
  */
@@ -244,6 +247,92 @@ async function createApiError(endpointName, response) {
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeFileReadBatchEntry(pathOrFile, encoding = "utf8") {
+  if (typeof pathOrFile === "string") {
+    const path = String(pathOrFile).trim();
+
+    return path
+      ? {
+          encoding,
+          path
+        }
+      : null;
+  }
+
+  if (isPlainObject(pathOrFile) && typeof pathOrFile.path === "string") {
+    const path = String(pathOrFile.path).trim();
+
+    return path
+      ? {
+          encoding: String(pathOrFile.encoding ?? encoding ?? "utf8"),
+          path
+        }
+      : null;
+  }
+
+  return null;
+}
+
+function normalizeFileReadBatchEntries(pathOrFiles, encoding = "utf8") {
+  if (Array.isArray(pathOrFiles)) {
+    return pathOrFiles
+      .map((entry) => normalizeFileReadBatchEntry(entry, encoding))
+      .filter(Boolean);
+  }
+
+  if (isPlainObject(pathOrFiles) && Array.isArray(pathOrFiles.files)) {
+    const requestEncoding = pathOrFiles.encoding ?? encoding;
+
+    return pathOrFiles.files
+      .map((entry) => normalizeFileReadBatchEntry(entry, requestEncoding))
+      .filter(Boolean);
+  }
+
+  const normalizedEntry = normalizeFileReadBatchEntry(pathOrFiles, encoding);
+  return normalizedEntry ? [normalizedEntry] : [];
+}
+
+function createFileReadEntryKey(pathOrFile, encoding = "utf8") {
+  const normalizedEntry = normalizeFileReadBatchEntry(pathOrFile, encoding);
+
+  if (!normalizedEntry) {
+    return "";
+  }
+
+  return `${normalizedEntry.path}\u0000${normalizedEntry.encoding}`;
+}
+
+function serializeStableValue(value) {
+  if (value === undefined) {
+    return "undefined";
+  }
+
+  if (value === null) {
+    return "null";
+  }
+
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => serializeStableValue(entry)).join(",")}]`;
+  }
+
+  if (!isPlainObject(value)) {
+    return "";
+  }
+
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${serializeStableValue(value[key])}`)
+    .join(",")}}`;
 }
 
 function createFileReadRequest(pathOrFiles, encoding) {
@@ -555,17 +644,54 @@ function createGitHistoryPreviewRequest(pathOrOptions, commitHash, operation = "
 
 export function createApiClient(options = {}) {
   const basePath = options.basePath || "/api";
+  const inFlightRequestPromises = new Map();
+  const queuedFileReadRequests = [];
+  const pendingFileReadPromises = new Map();
+  const DEDUPED_ENDPOINTS = new Set([
+    "extensions_load",
+    "file_read",
+    "file_info",
+    "file_list",
+    "file_paths",
+    "user_self_info"
+  ]);
+  let queuedFileReadHandle = null;
 
-  /**
-   * Universal server API caller for `/api/<endpoint>` modules.
-   *
-   * @template T
-   * @param {string} endpointName
-   * @param {ApiCallOptions} [callOptions]
-   * @returns {Promise<T>}
-   */
-  async function call(endpointName, callOptions = {}) {
-    const method = String(callOptions.method || "GET").toUpperCase();
+  function clearQueuedFileReadSchedule() {
+    if (queuedFileReadHandle != null && typeof globalThis.clearTimeout === "function") {
+      globalThis.clearTimeout(queuedFileReadHandle);
+    }
+
+    queuedFileReadHandle = null;
+  }
+
+  function createInFlightRequestKey(endpointName, method, callOptions = {}) {
+    const headers = callOptions.headers && typeof callOptions.headers === "object"
+      ? Object.fromEntries(
+          Object.entries(callOptions.headers)
+            .filter(([key]) => typeof key === "string" && key)
+            .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        )
+      : {};
+
+    return serializeStableValue({
+      body: callOptions.body,
+      endpointName,
+      headers,
+      method,
+      query: callOptions.query
+    });
+  }
+
+  function shouldDedupeCall(endpointName, method, callOptions = {}) {
+    if (callOptions.signal) {
+      return false;
+    }
+
+    return DEDUPED_ENDPOINTS.has(endpointName) && Boolean(method);
+  }
+
+  async function performCall(endpointName, method, callOptions = {}) {
     const url = buildApiUrl(basePath, endpointName, callOptions.query);
     const headers = new Headers(callOptions.headers || {});
     const init = {
@@ -601,6 +727,243 @@ export function createApiClient(options = {}) {
     return /** @type {Promise<T>} */ (parseApiResponse(response));
   }
 
+  function normalizeResolvedFileReadEntry(entry, file) {
+    return {
+      ...file,
+      encoding: file?.encoding ?? entry.encoding,
+      path: String(file?.path || entry.path)
+    };
+  }
+
+  async function retryQueuedFileReadsIndividually(uniqueEntries) {
+    const filesByEntryKey = new Map();
+    const errorsByEntryKey = new Map();
+
+    await Promise.all(
+      uniqueEntries.map(async (entry) => {
+        const entryKey = createFileReadEntryKey(entry, entry.encoding);
+
+        try {
+          const result = await call("file_read", createFileReadRequest(entry, entry.encoding));
+          filesByEntryKey.set(entryKey, normalizeResolvedFileReadEntry(entry, result));
+        } catch (error) {
+          errorsByEntryKey.set(entryKey, error);
+        }
+      })
+    );
+
+    return {
+      errorsByEntryKey,
+      filesByEntryKey
+    };
+  }
+
+  async function flushQueuedFileReads() {
+    clearQueuedFileReadSchedule();
+    const queuedRequests = queuedFileReadRequests.splice(0, queuedFileReadRequests.length);
+
+    if (!queuedRequests.length) {
+      return;
+    }
+
+    const uniqueFiles = new Map();
+    queuedRequests.forEach((request) => {
+      request.entries.forEach((entry) => {
+        const entryKey = createFileReadEntryKey(entry, entry.encoding);
+
+        if (!entryKey || uniqueFiles.has(entryKey)) {
+          return;
+        }
+
+        uniqueFiles.set(entryKey, {
+          encoding: entry.encoding,
+          path: entry.path
+        });
+      });
+    });
+
+    const uniqueEntries = [...uniqueFiles.values()];
+
+    try {
+      const result = await call("file_read", {
+        body: {
+          files: uniqueEntries
+        },
+        method: "POST"
+      });
+      const files = Array.isArray(result?.files) ? result.files : [];
+      const filesByEntryKey = new Map();
+
+      if (files.length !== uniqueEntries.length) {
+        throw new Error("API file_read batched result count did not match the request count.");
+      }
+
+      uniqueEntries.forEach((entry, index) => {
+        const file = files[index];
+
+        filesByEntryKey.set(
+          createFileReadEntryKey(entry, entry.encoding),
+          normalizeResolvedFileReadEntry(entry, file)
+        );
+      });
+
+      queuedRequests.forEach((request) => {
+        try {
+          const resolvedFiles = request.entries.map((entry) => {
+            const entryKey = createFileReadEntryKey(entry, entry.encoding);
+            const matchedFile = filesByEntryKey.get(entryKey);
+
+            if (!matchedFile) {
+              throw new Error(`API file_read batched result did not include ${entry.path}.`);
+            }
+
+            return matchedFile;
+          });
+
+          request.resolve(resolvedFiles);
+        } catch (error) {
+          request.reject(error);
+        }
+      });
+    } catch (error) {
+      if (uniqueEntries.length > 1) {
+        try {
+          const { errorsByEntryKey, filesByEntryKey } = await retryQueuedFileReadsIndividually(uniqueEntries);
+
+          queuedRequests.forEach((request) => {
+            try {
+              const resolvedFiles = request.entries.map((entry) => {
+                const entryKey = createFileReadEntryKey(entry, entry.encoding);
+
+                if (errorsByEntryKey.has(entryKey)) {
+                  throw errorsByEntryKey.get(entryKey);
+                }
+
+                const matchedFile = filesByEntryKey.get(entryKey);
+
+                if (!matchedFile) {
+                  throw new Error(`API file_read fallback result did not include ${entry.path}.`);
+                }
+
+                return matchedFile;
+              });
+
+              request.resolve(resolvedFiles);
+            } catch (retryError) {
+              request.reject(retryError);
+            }
+          });
+
+          return;
+        } catch (retryBatchError) {
+          queuedRequests.forEach((request) => {
+            request.reject(retryBatchError);
+          });
+
+          return;
+        }
+      }
+
+      queuedRequests.forEach((request) => {
+        request.reject(error);
+      });
+    }
+  }
+
+  function scheduleQueuedFileReadFlush() {
+    if (queuedFileReadHandle != null) {
+      return;
+    }
+
+    if (typeof globalThis.setTimeout === "function") {
+      queuedFileReadHandle = globalThis.setTimeout(() => {
+        void flushQueuedFileReads();
+      }, 0);
+      return;
+    }
+
+    queueMicrotask(() => {
+      void flushQueuedFileReads();
+    });
+  }
+
+  function queueFileRead(pathOrFiles, encoding = "utf8") {
+    const normalizedEntries = normalizeFileReadBatchEntries(pathOrFiles, encoding);
+
+    if (!normalizedEntries.length) {
+      return call("file_read", createFileReadRequest(pathOrFiles, encoding));
+    }
+
+    const isBatchRequest =
+      Array.isArray(pathOrFiles) ||
+      (isPlainObject(pathOrFiles) && Array.isArray(pathOrFiles.files));
+    const requestKey = serializeStableValue(normalizedEntries);
+    const pendingPromise = pendingFileReadPromises.get(requestKey);
+
+    if (pendingPromise) {
+      return pendingPromise.then((resolvedFiles) =>
+        isBatchRequest
+          ? {
+              count: resolvedFiles.length,
+              files: resolvedFiles
+            }
+          : resolvedFiles[0]
+      );
+    }
+
+    const queuedPromise = new Promise((resolve, reject) => {
+      queuedFileReadRequests.push({
+        entries: normalizedEntries,
+        reject,
+        resolve
+      });
+      scheduleQueuedFileReadFlush();
+    }).finally(() => {
+      pendingFileReadPromises.delete(requestKey);
+    });
+
+    pendingFileReadPromises.set(requestKey, queuedPromise);
+    return queuedPromise.then((resolvedFiles) =>
+      isBatchRequest
+        ? {
+            count: resolvedFiles.length,
+            files: resolvedFiles
+          }
+        : resolvedFiles[0]
+    );
+  }
+
+  /**
+   * Universal server API caller for `/api/<endpoint>` modules.
+   *
+   * @template T
+   * @param {string} endpointName
+   * @param {ApiCallOptions} [callOptions]
+   * @returns {Promise<T>}
+   */
+  async function call(endpointName, callOptions = {}) {
+    const method = String(callOptions.method || "GET").toUpperCase();
+    const shouldDedupe = shouldDedupeCall(endpointName, method, callOptions);
+
+    if (!shouldDedupe) {
+      return performCall(endpointName, method, callOptions);
+    }
+
+    const requestKey = createInFlightRequestKey(endpointName, method, callOptions);
+    const pendingPromise = inFlightRequestPromises.get(requestKey);
+
+    if (pendingPromise) {
+      return pendingPromise;
+    }
+
+    const requestPromise = performCall(endpointName, method, callOptions).finally(() => {
+      inFlightRequestPromises.delete(requestKey);
+    });
+
+    inFlightRequestPromises.set(requestKey, requestPromise);
+    return requestPromise;
+  }
+
   /**
    * @returns {Promise<{ ok: boolean, name: string, browserAppUrl: string, responsibilities: string[] }>}
    */
@@ -619,7 +982,7 @@ export function createApiClient(options = {}) {
    * @returns {Promise<FileApiResult | FileBatchApiResult>}
    */
   async function fileRead(pathOrFiles, encoding = "utf8") {
-    return call("file_read", createFileReadRequest(pathOrFiles, encoding));
+    return queueFileRead(pathOrFiles, encoding);
   }
 
   /**

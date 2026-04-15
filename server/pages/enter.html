@@ -7,9 +7,11 @@
     <meta name="apple-mobile-web-app-title" content="Space Agent" />
     <meta name="theme-color" content="#050816" />
     <title>Enter Space | Space Agent</title>
-    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="shortcut icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/pages/res/space-backdrop.css" />
@@ -29,6 +31,8 @@
         --color-text-primary: #f3f7ff;
         --color-text-secondary: #b8c4da;
         --color-text-tertiary: #8e9bb2;
+        --color-status-warning: #ffd166;
+        --color-status-danger: #ff8d98;
         --color-accent-primary: #7ddcff;
         --color-accent-primary-strong: #94bcff;
         --color-accent-primary-soft: rgba(125, 220, 255, 0.14);
@@ -48,6 +52,10 @@
 
       * {
         box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
       }
 
       html {
@@ -93,7 +101,7 @@
         animation-delay: 1150ms;
       }
 
-      .instance-version {
+      .shell-footer {
         animation: login-fadeup 0.7s ease-out both;
         animation-delay: 1320ms;
       }
@@ -103,7 +111,7 @@
         h1,
         .intro-copy,
         .launcher-actions,
-        .instance-version {
+        .shell-footer {
           animation: none;
         }
       }
@@ -199,6 +207,59 @@
         align-self: center;
       }
 
+      .browser-compat-panel {
+        align-self: center;
+        display: grid;
+        gap: 0.95rem;
+        padding: clamp(1.25rem, 3vw, 1.65rem);
+        border-radius: 26px;
+        background: linear-gradient(180deg, rgba(34, 14, 22, 0.9), rgba(11, 16, 29, 0.84));
+        border: 1px solid rgba(255, 141, 152, 0.28);
+        box-shadow:
+          0 24px 64px rgba(0, 0, 0, 0.38),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(18px);
+      }
+
+      .browser-compat-eyebrow {
+        margin: 0;
+        color: var(--color-status-warning);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .browser-compat-title {
+        margin: 0;
+        font-size: 1.65rem;
+        letter-spacing: -0.03em;
+      }
+
+      .browser-compat-copy,
+      .browser-compat-note {
+        margin: 0;
+        color: var(--color-text-secondary);
+        line-height: 1.55;
+      }
+
+      .browser-compat-list {
+        margin: 0;
+        padding-left: 1.25rem;
+        color: var(--color-text-secondary);
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .browser-compat-list strong {
+        color: var(--color-text-primary);
+      }
+
+      .browser-compat-note {
+        color: var(--color-text-tertiary);
+        font-size: 0.93rem;
+      }
+
       .launcher-link {
         display: grid;
         place-items: center;
@@ -258,16 +319,73 @@
         border-color: rgba(168, 186, 219, 0.24);
       }
 
-      .instance-version {
+      .shell-footer {
         grid-column: 1 / -1;
-        justify-self: center;
+        display: grid;
+        justify-items: center;
+        gap: 0.65rem;
+      }
+
+      .public-links {
+        pointer-events: auto;
+      }
+
+      .public-links-list {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .public-link {
+        display: grid;
+        place-items: center;
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 999px;
+        opacity: 0.72;
+        transition:
+          opacity 160ms ease,
+          transform 160ms ease,
+          background-color 160ms ease,
+          box-shadow 160ms ease;
+      }
+
+      .public-link:hover {
+        opacity: 0.96;
+        transform: translateY(-1px);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .public-link:focus-visible {
+        outline: none;
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: 0 0 0 4px rgba(125, 220, 255, 0.12);
+      }
+
+      .public-link-icon {
+        display: block;
+        width: 1.2rem;
+        height: 1.2rem;
+        filter: drop-shadow(0 1px 10px rgba(255, 255, 255, 0.14));
+      }
+
+      .public-link-icon-agent-zero {
+        width: 1.44rem;
+        height: 1.44rem;
+      }
+
+      .instance-version {
         margin: 0;
         color: #ffffff;
-        font-size: 0.92rem;
-        font-weight: 700;
+        font-size: 0.84rem;
+        font-weight: 650;
         line-height: 1.4;
         text-align: center;
-        opacity: 0.9;
+        opacity: 0.74;
         pointer-events: none;
         text-shadow:
           0 1px 18px rgba(255, 255, 255, 0.22),
@@ -401,17 +519,103 @@
         </p>
       </section>
 
-      <section class="launcher-actions" aria-label="Launcher actions">
+      <section class="launcher-actions" aria-label="Launcher actions" data-space-browser-compat-hide-on-fail>
         <a id="enter-space-link" class="launcher-link launcher-link-primary" href="/">Enter Space</a>
         <a id="enter-admin-link" class="launcher-link launcher-link-secondary" href="/admin">Admin Mode</a>
       </section>
 
-      <p class="instance-version" aria-label="Instance version">
-        Version <span><!-- SPACE_PROJECT_VERSION --></span>
-      </p>
+      <section
+        class="browser-compat-panel"
+        aria-label="Browser compatibility warning"
+        aria-live="assertive"
+        data-space-browser-compat-target
+        hidden
+      ></section>
+
+      <div class="shell-footer">
+        <nav class="public-links" aria-label="Space Agent links">
+          <ul class="public-links-list">
+            <li>
+              <a
+                class="public-link"
+                href="https://github.com/agent0ai/space-agent"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="GitHub repository"
+              >
+                <img
+                  class="public-link-icon"
+                  src="/pages/res/social-github.svg"
+                  alt=""
+                  decoding="async"
+                />
+              </a>
+            </li>
+            <li>
+              <a
+                class="public-link"
+                href="https://discord.gg/B8KZKNsPpj"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Discord community"
+              >
+                <img
+                  class="public-link-icon"
+                  src="/pages/res/social-discord.svg"
+                  alt=""
+                  decoding="async"
+                />
+              </a>
+            </li>
+            <li>
+              <a
+                class="public-link"
+                href="https://x.com/Agent0ai"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Agent Zero on X"
+              >
+                <img
+                  class="public-link-icon"
+                  src="/pages/res/social-x.svg"
+                  alt=""
+                  decoding="async"
+                />
+              </a>
+            </li>
+            <li>
+              <a
+                class="public-link"
+                href="https://agent-zero.ai"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Agent Zero website"
+              >
+                <img
+                  class="public-link-icon public-link-icon-agent-zero"
+                  src="/pages/res/social-agent-zero.svg"
+                  alt=""
+                  decoding="async"
+                />
+              </a>
+            </li>
+          </ul>
+        </nav>
+        <p class="instance-version" aria-label="Instance version">
+          <span><!-- SPACE_PROJECT_VERSION --></span>
+        </p>
+      </div>
     </main>
     <script src="/pages/res/space-backdrop.js"></script>
+    <script src="/pages/res/browser-compat.js"></script>
     <script>
+      (async function () {
+        const browserCompatibility = await window.SpaceBrowserCompatibility.check();
+
+        if (!browserCompatibility?.ok) {
+          return;
+        }
+
       const ENTER_PAGE_PATH = "/enter";
       const ENTER_TAB_ACCESS_KEY = "space.enter.tab-access";
       const introEnterSpaceLink = document.getElementById("enter-space-link");
@@ -721,6 +925,7 @@
       } else {
         startIntroFloat();
       }
+      })();
     </script>
   </body>
 </html>

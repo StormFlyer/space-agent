@@ -16,6 +16,7 @@ Current deeper admin docs:
 
 - `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/files/AGENTS.md`
+- `app/L0/_all/mod/_core/admin/views/time_travel/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 
 Update rules:
@@ -54,6 +55,7 @@ This module owns:
 - `views/dashboard/`: dashboard and launch surface inside the admin pane
 - `views/agent/`: admin-side agent surface
 - `views/files/`: admin Files tab adapter that mounts `_core/file_explorer`
+- `views/time_travel/`: admin Time Travel tab adapter that mounts `_core/time_travel`
 - `views/modules/`: firmware-backed modules panel
 - `res/`: admin-local visual assets
 - `ext/skills/`: admin-owned skill files exposed through the shared module skill discovery contract
@@ -70,9 +72,11 @@ Current shell responsibilities:
 
 - `views/shell/shell.html` owns the split two-pane layout
 - `views/shell/shell.html` also exports the admin-page skill-context tag through `<x-skill-context tag="admin">`
+- `views/shell/shell.html` mirrors the routed `[id="_core/onscreen_menu/bar_start"]` inject host above admin tab content so embedded routed surfaces can reuse their existing injected controls inside `/admin`
 - `views/shell/shell.js` owns split sizing, drag-resize behavior, orientation-dependent layout, `?url=` startup handling, and leave-admin navigation back into the current iframe URL
-- `views/shell/page.js` owns admin tabs, quick actions, tab keyboard behavior, cached `space.api.userSelfInfo()` state, and `_admin` membership checks derived from `groups`
+- `views/shell/page.js` owns admin tabs, dashboard quick actions, tab keyboard behavior, cached `space.api.userSelfInfo()` state, and `_admin` membership checks derived from `groups`
 - the admin topbar keeps tab controls in a real tablist and ends with a non-tab leave-admin icon button that calls the same `adminShell.leaveAdminArea()` action as the dashboard card
+- tab-specific routed controls injected into `[id="_core/onscreen_menu/bar_start"]` should appear in the mirrored admin host only while their tab is active; lazy-mount those panels when needed instead of leaving stale injected controls behind
 - `ext/html/_core/onscreen_menu/items/admin.html` owns the routed header-menu Admin action, orders it with `data-order="400"`, and builds `/admin?url=<current-path-search-hash>` so the admin iframe opens on the current app location
 - the active admin tab is remembered in `sessionStorage`
 - iframe-local routed navigation such as the onscreen menu Dashboard action should keep the right-hand pane inside the iframe unless the action explicitly leaves `/admin`
@@ -86,6 +90,7 @@ High-level ownership:
 - `views/dashboard/` is the lightweight dashboard and launch surface
 - `views/agent/` is the admin-side chat or execution surface, owns `space.admin.loadSkill(...)`, and supports remote API transport plus a browser-local Hugging Face provider behind one shared admin loop
 - `views/files/` is the admin Files tab adapter; reusable file browsing, editing, creation, copy, move, delete, and download behavior is owned by `_core/file_explorer`
+- `views/time_travel/` is the admin Time Travel tab adapter; reusable history state, repository discovery, diffs, travel, revert, and injected refresh or repository controls are owned by `_core/time_travel`
 - `views/modules/` is the firmware-backed module list and removal surface
 
 ## Skills Contract

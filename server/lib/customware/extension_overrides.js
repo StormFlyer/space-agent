@@ -15,47 +15,50 @@ function normalizeExtensionPattern(value) {
   }
 }
 
+function normalizeExtensionPatterns(patterns) {
+  return Array.isArray(patterns)
+    ? patterns
+        .map((pattern) => normalizeExtensionPattern(pattern))
+        .filter(Boolean)
+    : [];
+}
+
 function compileExtensionPatterns(patterns) {
-  return patterns
-    .map((pattern) => normalizeExtensionPattern(pattern))
-    .filter(Boolean)
-    .map((pattern) => ({
-      matcher: globToRegExp(pattern),
-      pattern
-    }));
+  return normalizeExtensionPatterns(patterns).map((pattern) => ({
+    matcher: globToRegExp(pattern),
+    pattern
+  }));
 }
 
 function matchesExtensionPattern(entry, compiledPatterns) {
   return compiledPatterns.some(({ matcher }) => matcher.test(entry.extensionPath));
 }
 
-function listResolvedExtensionRequestPathGroups(options = {}) {
+function listResolvedExtensionRequests(options = {}) {
   const { maxLayer, requests = [], runtimeParams, stateSystem, username } = options;
 
   if (!stateSystem) {
-    return Object.create(null);
+    return [];
   }
 
   const normalizedRequests = requests
     .map((request) => {
-      const key = String(request && request.key || "").trim();
-      const compiledPatterns = compileExtensionPatterns(
-        Array.isArray(request && request.patterns) ? request.patterns : []
-      );
+      const patterns = normalizeExtensionPatterns(request && request.patterns);
+      const compiledPatterns = compileExtensionPatterns(patterns);
 
-      if (!key || compiledPatterns.length === 0) {
+      if (compiledPatterns.length === 0) {
         return null;
       }
 
       return {
         compiledPatterns,
-        key
+        patterns
       };
     })
     .filter(Boolean);
 
   if (normalizedRequests.length === 0) {
-    return Object.create(null);
+    return [];
   }
 
   const groupIndex = getRuntimeGroupIndexFromStateSystem(stateSystem, runtimeParams);
@@ -76,38 +79,32 @@ function listResolvedExtensionRequestPathGroups(options = {}) {
     }
   );
 
-  const selectedEntriesByKey = new Map(
-    normalizedRequests.map((request) => [request.key, new Map()])
-  );
+  const selectedEntriesByRequestIndex = normalizedRequests.map(() => new Map());
 
   for (const entry of accessibleEntries) {
-    for (const request of normalizedRequests) {
+    for (const [index, request] of normalizedRequests.entries()) {
       if (!matchesExtensionPattern(entry, request.compiledPatterns)) {
         continue;
       }
 
-      selectedEntriesByKey.get(request.key).set(entry.requestPath, entry);
+      selectedEntriesByRequestIndex[index].set(entry.requestPath, entry);
     }
   }
 
-  const results = Object.create(null);
-
-  for (const request of normalizedRequests) {
-    results[request.key] = [...selectedEntriesByKey.get(request.key).values()]
+  return normalizedRequests.map((request, index) => ({
+    extensions: [...selectedEntriesByRequestIndex[index].values()]
       .sort(compareRankedEntries)
-      .map((entry) => entry.requestPath);
-  }
-
-  return results;
+      .map((entry) => entry.requestPath),
+    patterns: [...request.patterns]
+  }));
 }
 
 function listResolvedExtensionRequestPaths(options = {}) {
   const { maxLayer, patterns = [], runtimeParams, stateSystem, username } = options;
-  const results = listResolvedExtensionRequestPathGroups({
+  const results = listResolvedExtensionRequests({
     maxLayer,
     requests: [
       {
-        key: "default",
         patterns
       }
     ],
@@ -116,10 +113,10 @@ function listResolvedExtensionRequestPaths(options = {}) {
     username,
   });
 
-  return results.default || [];
+  return results[0]?.extensions || [];
 }
 
 export {
-  listResolvedExtensionRequestPathGroups,
+  listResolvedExtensionRequests,
   listResolvedExtensionRequestPaths
 };

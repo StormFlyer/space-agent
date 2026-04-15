@@ -23,6 +23,8 @@ It owns:
 - its own prompt assembly, history compaction, execution loop, and attachment runtime
 - its own LLM transport switch between remote API streaming and the browser-local Hugging Face provider
 
+The stored admin config keeps `api_key` encrypted at rest when `space.utils.userCrypto` is unlocked for the current browser session. Encrypted values are stored as `userCrypto:`-prefixed strings in `~/conf/admin-chat.yaml`, decrypted automatically on load, and fail soft to a blank locked field when the current session cannot decrypt them. In `SINGLE_USER_APP=true`, `space.utils.userCrypto` bypasses encryption entirely, so `api_key` stays plaintext and no `userCrypto:` wrapper is added.
+
 It does not depend on `_core/onscreen_agent` internals.
 
 The shared thread view keeps settled admin assistant replies markdown-rendered, but submitted user bubbles stay plain pre-wrapped text so typed blank lines display literally instead of expanding into markdown paragraph gaps.
@@ -112,6 +114,6 @@ This means the admin agent reuses the same browser-local assets, worker state, a
 
 ## Style Isolation
 
-The admin shell mounts the admin tabs together, including the agent tab and the Files tab.
+The admin shell mounts the admin tabs together, including the agent, Files, Time Travel, and Modules tabs.
 
 Admin-agent CSS may tune shared visual primitives for the agent surface, but those selectors must stay scoped under `.admin-agent-root`. Unscoped rules for `.secondary-button`, `.primary-button`, `.confirm-button`, or related visual primitives will leak into other admin panels that reuse the same shared component stack.

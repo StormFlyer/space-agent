@@ -1,6 +1,6 @@
 import { normalizePathSegment } from "../lib/utils/app_files.js";
 import {
-  listResolvedExtensionRequestPathGroups,
+  listResolvedExtensionRequests,
   listResolvedExtensionRequestPaths
 } from "../lib/customware/extension_overrides.js";
 import { resolveRequestMaxLayer } from "../lib/customware/layer_limit.js";
@@ -47,7 +47,7 @@ function readRequestedPatterns(input, normalizePattern = createNormalizePattern(
   }
 
   return (filters.length > 0 ? filters : ["*"]).map((filter) =>
-    normalizePattern(`${extensionPoint}/${filter}`)
+    normalizePattern(extensionPoint + "/" + filter)
   ).filter(Boolean);
 }
 
@@ -57,22 +57,14 @@ function readRequestedGroups(context) {
 
   if (Array.isArray(payload.requests)) {
     return payload.requests
-      .map((request, index) => {
+      .map((request) => {
         const patterns = readRequestedPatterns(request, normalizePattern);
-        const key =
-          request && typeof request === "object" && !Array.isArray(request) &&
-          typeof request.key === "string" && request.key.trim()
-            ? request.key.trim()
-            : `request:${index}`;
 
         if (patterns.length === 0) {
           return null;
         }
 
-        return {
-          key,
-          patterns
-        };
+        return { patterns };
       })
       .filter(Boolean);
   }
@@ -84,7 +76,6 @@ function readRequestedGroups(context) {
 
   return [
     {
-      key: "default",
       patterns
     }
   ];
@@ -103,7 +94,7 @@ export function post(context) {
 
   if (Array.isArray(payload.requests)) {
     return {
-      results: listResolvedExtensionRequestPathGroups({
+      results: listResolvedExtensionRequests({
         maxLayer,
         requests,
         runtimeParams: context.runtimeParams,
@@ -123,9 +114,6 @@ export function post(context) {
   });
 
   return {
-    results: {
-      default: extensions
-    },
     extensions
   };
 }

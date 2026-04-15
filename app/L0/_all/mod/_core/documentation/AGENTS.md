@@ -57,6 +57,7 @@ This module owns:
 - update `ext/skills/documentation/SKILL.md` whenever you add, remove, rename, or substantially repurpose a doc file
 - when a stable contract changes elsewhere in the repo, update the relevant source `AGENTS.md` first or alongside it, then reflect that change into this module's docs
 - when `_core/spaces` changes widget-authoring defaults, keep `docs/app/spaces-and-widgets.md` aligned with `ext/skills/spaces/SKILL.md`, including shell-level expectations such as built-in padding, default surface color, and the default light-on-dark foreground treatment
+- when bundled onboarding or welcome demo widgets change stable data-cleanup behavior, keep `docs/app/spaces-and-widgets.md` aligned with the owning `_core/spaces` and `_core/dashboard_welcome` contracts in the same session
 - when extension-loading behavior changes, keep the matching `docs/app/` and `docs/server/` pages aligned in the same session, and update `docs/cli/` only when the change really affects CLI-managed runtime params
 - when skill discovery, skill-context tags, or skill frontmatter rules change, keep `docs/app/modules-and-extensions.md`, `docs/app/admin-agent-runtime.md`, `docs/app/spaces-and-widgets.md`, `docs/agent/skills-and-documentation.md`, and `docs/agent/prompt-and-execution.md` aligned in the same session
 - when the shared `development` router skill changes its visibility model or nested-skill index structure, keep `docs/agent/skills-and-documentation.md` aligned in the same session

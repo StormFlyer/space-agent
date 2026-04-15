@@ -38,7 +38,7 @@ Example:
 ## Extension Metadata Rules
 
 - Modules may also store lightweight metadata assets under other `ext/` folders when those files should follow the same readable-layer permissions and same-path override rules as HTML and JS extensions.
-- The current first-party example is `ext/panels/*.yaml`, which the dashboard panel index discovers through `extensions_load`.
+- The current first-party example is `ext/panels/*.yaml`, which the dashboard panel index discovers through `file_paths`, batch-reads through `fileRead(...)`, and collapses to one effective manifest per `modulePath + manifestName`.
 - Keep those metadata files display-oriented. They are extension-resolved module assets, not general writable storage.
 
 ## Component Loader Rules
@@ -65,6 +65,7 @@ Example:
 - Prefer additive composition before exact-path replacement.
 - `maxLayer` constrains module and extension resolution but not logical app-file paths.
 - Uncached HTML `<x-extension>` lookups batch before they call `/api/extensions_load`; the default flush is the next animation frame, and frontend constant `HTML_EXTENSIONS_LOAD_BATCH_WAIT_MS` in `app/L0/_all/mod/_core/framework/js/extensions.js` adds an extra wait window in milliseconds before that frame-aligned flush.
+- `extensions_load` keeps `maxLayer` at the call level; grouped lookups send ordered `patterns` arrays and receive ordered results with matching `patterns` plus resolved `extensions`.
 - JS hook lookups do not use that wait window; they resolve immediately because hook callers await them directly.
 
 ## Practical Guidance

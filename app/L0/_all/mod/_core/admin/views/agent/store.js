@@ -1652,7 +1652,9 @@ const model = {
       maxTokens,
       model: (this.settingsDraft.model || "").trim(),
       paramsText,
-      provider
+      provider,
+      storedApiKeyLocked: this.settings.storedApiKeyLocked === true,
+      storedApiKeyValue: String(this.settings.storedApiKeyValue || "")
     };
 
     try {

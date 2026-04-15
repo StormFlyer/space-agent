@@ -38,6 +38,7 @@ This scope owns:
 - `system-prompt.md` should force unavoidable blocking questions into one direct minimal question with no acknowledgement preface and no narration like `I can...` or `I need...`
 - `system-prompt.md` should treat short follow-up user fragments as likely missing values or redirects for active work when they fit
 - `system-prompt.md` should force follow-up extraction after broad reads: if one more read can unpack or extract the answer, the prompt should push the agent to execute that read instead of stopping
+- `system-prompt.md` must distinguish camelCase runtime identity fields like `space.api.userSelfInfo().fullName` from snake_case persisted YAML keys like `~/user.yaml` `full_name` so the agent does not mirror API field names back into user config files
 - avoid concrete blocker examples that can over-anchor one domain behavior; prefer general rules when the concept is reusable
 - the ordered turn loop has already helped steer the agent toward correct execution-first behavior; prefer strengthening that loop over adding more fragmented local rules
 - prefer one explicit decision loop over scattered local rules when the same behavior can be expressed once in order

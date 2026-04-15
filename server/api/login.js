@@ -42,6 +42,7 @@ export async function post(context) {
       context.auth.completeLogin({
         challengeToken: payload.challengeToken,
         clientProof: payload.clientProof,
+        userCryptoProvisioning: payload.userCryptoProvisioning,
         req: context.req
       })
     );
@@ -55,6 +56,8 @@ export async function post(context) {
       body: {
         authenticated: true,
         serverSignature: loginResult.serverSignature,
+        sessionId: loginResult.sessionId,
+        userCrypto: loginResult.userCrypto,
         username: loginResult.username
       }
     };

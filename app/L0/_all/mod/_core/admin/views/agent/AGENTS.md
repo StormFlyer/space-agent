@@ -39,6 +39,12 @@ Current stored config fields are written in YAML as:
 - `huggingface_dtype`
 - optional `custom_system_prompt`
 
+Important persistence rules:
+
+- `api_key` is browser-owned user config and should be stored encrypted at rest with `space.utils.userCrypto` whenever that session is unlocked
+- encrypted admin API keys are stored as `userCrypto:`-prefixed strings in `~/conf/admin-chat.yaml`
+- when the runtime cannot currently decrypt an existing encrypted `api_key`, load should surface the field as blank plus locked metadata instead of crashing, and save should preserve the stored ciphertext until the user explicitly replaces or clears it from an unlocked session
+
 Current defaults:
 
 - provider: `api`
@@ -59,7 +65,7 @@ Prompt rules:
 - after that catalog, the runtime appends auto-loaded skill context for any readable admin-eligible skill whose `metadata.loaded` condition currently passes, routing that content by the effective placement; auto-loaded skills may not resolve to history and therefore fall back to `system` unless they explicitly set `transient`, and manual loads use that same effective placement rule
 - the API-mode fetch branch must finalize its upstream request through `api.js` seam `_core/admin/views/agent/api.js/prepareAdminAgentApiRequest`; provider-specific headers or body rewrites belong in extension modules such as `_core/open_router`, not hard-coded in the admin runtime
 - `api.js` may fold consecutive prepared `user` or `assistant` payload messages into alternating transport turns with `\n\n` joins immediately before the fetch call, but that transport-only fold must not mutate stored history or prompt-history state
-- the firmware prompt documents `space.api.userSelfInfo()` as `{ username, fullName, groups, managedGroups }`, and admin checks should derive from `groups.includes("_admin")`
+- the firmware prompt documents `space.api.userSelfInfo()` as `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }`, and admin checks should still derive from `groups.includes("_admin")`
 
 ## Execution And UI Contract
 

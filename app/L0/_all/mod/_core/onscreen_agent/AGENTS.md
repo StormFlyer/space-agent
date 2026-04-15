@@ -40,9 +40,10 @@ This module owns:
 
 - `ext/html/page/router/overlay/end/onscreen-agent.html`: thin adapter that mounts the overlay into the router overlay seam
 - `ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentExampleMessages/end/*.js`: prompt-example extensions that prepend live few-shot conversations ahead of thread history
+- `ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections/end/*.js`: transient-context extensions that append model-facing runtime context such as compact-mode response guidance
 - `panel.html`: overlay UI and the module-owned `onscreen` skill-context tag exported through `<x-skill-context>`
 - `response-markdown.css`: overlay-local markdown presentation overrides for assistant responses
-- `store.js`: floating-shell state, send loop, persistence, avatar drag behavior, edge-hide peeking state, history resize behavior, display mode, overlay menus, and the derived example-prompt status getters exposed on the global Alpine `onscreenAgent` store for launchers such as spaces onboarding
+- `store.js`: floating-shell state, send loop, persistence, avatar drag behavior, edge-hide peeking state, history resize behavior, display mode, overlay menus, lazy prompt bootstrapping, and the derived example-prompt status getters exposed on the global Alpine `onscreenAgent` store for launchers such as spaces onboarding
 - `view.js`: shared-thread-view wiring
 - `skills.js`: onscreen skill discovery wrappers around shared `/mod/_core/skillset/skills.js`, skill frontmatter metadata flags, `space.skills.load(...)`, and skill-related JS extension seams
 - `llm.js`, `api.js`, `execution.js`, `attachments.js`, and `llm-params.js`: local runtime helpers
@@ -72,6 +73,12 @@ Current config fields include:
 - `huggingface_dtype`
 - optional `custom_system_prompt`
 
+Config encryption rules:
+
+- the overlay `api_key` is browser-owned user config and should be stored encrypted at rest with `space.utils.userCrypto` whenever that session is unlocked
+- encrypted overlay API keys are stored as `userCrypto:`-prefixed strings in `~/conf/onscreen-agent.yaml`
+- when the runtime cannot currently decrypt an existing encrypted `api_key`, load should surface the field as blank plus locked metadata instead of crashing, and save should preserve the stored ciphertext until the user explicitly replaces or clears it from an unlocked session
+
 Current browser UI state fields include:
 
 - `agent_x`
@@ -95,7 +102,7 @@ Current defaults:
 - local provider: `huggingface`
 - Hugging Face dtype: `q4`
 - API endpoint: `https://openrouter.ai/api/v1/chat/completions`
-- model: `openai/gpt-5.4-mini`
+- model: `anthropic/claude-sonnet-4.6`
 - params: `temperature:0.2`
 - max tokens: `64000`
 - default display mode: compact
@@ -105,6 +112,8 @@ Prompt rules:
 - `prompts/system-prompt.md` is the firmware prompt
 - the current live firmware prompt was promoted from `tests/agent_llm_performance/prompts/069A_handoff_no_copy.md` on 2026-04-07 after the `070` through `075` prompt sweep because it remained the best overall prompt on the 57-case suite, combining the best one-shot score with the strongest full-suite repeat stability among the finalists on `openai/gpt-5.4-mini`; the previous live prompt was backed up as `prompts/system-prompt.backup-before-069A-handoff-no-copy-2026-04-07.md`
 - custom instructions are appended under `## User specific instructions`
+- `store.js` init restores config, persisted browser UI state, and history first; it must not eagerly fetch the default system prompt, install the onscreen skill runtime, or assemble prompt input just to mount the overlay
+- prompt dependencies such as the default firmware prompt, the skill runtime, the skill catalog, and prompt-section extensions load lazily on the first prompt-dependent action such as sending a message, rebuilding prompt input, or opening the prompt-history dialog
 - the prepared prompt order is `system -> examples -> compacted history summary when present -> live history -> transient`
 - examples are optional, empty by default, and are inserted as ordinary alternating user or assistant messages ahead of live history rather than being folded into the system prompt
 - example messages count toward prompt-history token totals and appear in the prompt-history modal, but automatic or manual history compaction may replace only live history turns, never the examples or transient section
@@ -124,6 +133,7 @@ Prompt rules:
 - the top-level skill catalog and auto-loaded skill channels are model-facing prompt context and therefore belong to `llm.js` orchestration even though `skills.js` still owns low-level skill discovery helpers and `space.skills.load(...)`
 - `_core/spaces` currently uses the sections seam only to inject a space-local `## Current Space Agent Instructions` section when the current space defines agent instructions; generic spaces workflow guidance belongs in the route-scoped auto-loaded `spaces` skill, and live widget catalogs or current-space details should be loaded on demand instead of being pre-injected into the prompt
 - `_core/promptinclude` uses the system-prompt sections seam plus the transient sections seam to inject persistent prompt-include instructions, readable `*.system.include.md` system-prompt sections, and readable `*.transient.include.md` transient blocks without adding promptinclude-specific branching to `llm.js`
+- the module-local transient extension under `ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections/end/display-mode.js` should inject one short lowercase `chat display mode` transient section only while the overlay is in compact mode, telling the model `chat is in compact mode` and `keep replies short unless more detail is needed for correctness or the user asks for it`; full mode should add no display-mode section
 - module-specific prompt workflow rules and helper-specific execution guidance should live in owner-module auto-loaded skills or owner-module `_core/onscreen_agent/...` prompt extensions, not in the base firmware prompt unless the rule is overlay-generic
 - the firmware prompt should start with an environment block that explains the agent is a JavaScript-based browser assistant living inside the live page and acting through browser state plus Space Agent runtime APIs
 - the firmware prompt should define a `$mission` block above `$protocol`; that `$mission` should tell the agent to be useful, follow the latest `$human_command`, and drive the user toward `$verified_completion` with minimal correct steps
@@ -145,7 +155,7 @@ Prompt rules:
 - the firmware prompt should avoid concrete blocker examples that over-anchor one domain and should prefer general reusable rules when the behavior is cross-domain
 - the firmware prompt should make clear that in `$task_mode` a `$terminal_response` is the final non-executing shot for that turn, so it is forbidden before `$verified_completion` except for one truly unavoidable blocking question, and prompt wording should phrase violations as `$mission failed`
 - the firmware prompt should tell the agent that a `$thrust_response` is the only assistant output that keeps the task loop alive because it causes execution and yields the next `$framework_telemetry` turn
-- the firmware prompt should tell the agent that `space.api.userSelfInfo()` returns `{ username, fullName, groups, managedGroups }` and that writable app roots are derived from `username`, `managedGroups`, and `_admin` membership in `groups`
+- the firmware prompt should tell the agent that `space.api.userSelfInfo()` returns `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }` while `~/user.yaml` still stores `full_name`, and that writable app roots are derived from `username`, `managedGroups`, and `_admin` membership in `groups`
 - the firmware prompt should also remind the agent to `return await ...` for browser mutations that need confirmation, should refer to the active thread as `space.chat`, should use `space.utils.yaml.parse(...)` plus `space.utils.yaml.stringify(...)`, should explain writable-scope discovery from `space.api.userSelfInfo()` plus the standard layer rules, and should leave domain-specific widget workflow guidance to the route-scoped auto-loaded `spaces` skill instead of duplicating it in the base firmware prompt
 - the firmware prompt should use first-party helpers such as `/mod/_core/skillset/ext/skills/screenshots/screenshots.js` for reusable browser tasks instead of teaching remote script injection
 - the firmware prompt should enforce telemetry truth: the `$staging_sequence` must describe the code in the same message, read-only execution may not be narrated as mutation, success claims require matching success telemetry for that exact action, and an `execution error` telemetry turn forbids any success claim
@@ -220,7 +230,7 @@ Current overlay behavior:
 - when full mode mounts or the viewport changes, the store keeps the raw persisted history height instead of rewriting it to the current viewport fit; the rendered height is clamped against the currently available space on that side so reloads preserve the chosen size while smaller screens still fit
 - the compact and full composer panels accept attachments from either the file picker or direct file drag-and-drop onto the chat box
 - keyboard submit from the composer textarea and the form submit path may send a new message or queue a follow-up draft, but they must never trigger `requestStop()`; stopping the active loop stays an explicit primary-button click only
-- saved browser UI state for `agent_x`, `agent_y`, optional `hidden_edge`, `history_height`, and `display_mode` is loaded during init before prompt startup continues, and the floating shell stays unmounted until that startup load has resolved so refreshes never flash the default bottom-left position before the stored coordinates and peeking state are applied
+- saved browser UI state for `agent_x`, `agent_y`, optional `hidden_edge`, `history_height`, and `display_mode` is loaded during init before the overlay finishes mounting, and the floating shell stays unmounted until that startup load has resolved so refreshes never flash the default bottom-left position before the stored coordinates and peeking state are applied
 - the first shell paint should ease in with a short reveal once startup positioning is ready, but avoid ancestor opacity fades on the shell itself because they break the backdrop blur used by the history and composer surfaces
 - internal startup statuses such as prompt bootstrapping may gate controls, but they should not replace the composer placeholder because they are not user-relevant; user-visible errors and action results should still surface through `status`
 - when the persisted LLM settings still match the shipped defaults and the API key is blank, the composer blocks the full textarea area with a blurred overlay and centered `Set LLM API key` action until credentials are configured

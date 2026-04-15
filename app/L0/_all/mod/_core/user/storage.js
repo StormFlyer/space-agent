@@ -21,11 +21,13 @@ function getRuntime() {
 
   if (
     !runtime.utils ||
+    !runtime.utils.userCrypto ||
+    typeof runtime.utils.userCrypto.buildPasswordRewrap !== "function" ||
     !runtime.utils.yaml ||
     typeof runtime.utils.yaml.parse !== "function" ||
     typeof runtime.utils.yaml.stringify !== "function"
   ) {
-    throw new Error("space.utils.yaml helpers are not available.");
+    throw new Error("space.utils userCrypto or yaml helpers are not available.");
   }
 
   return runtime;
@@ -116,12 +118,14 @@ export async function saveUserFullName(fullName, options = {}) {
 
 export async function changeUserPassword(currentPassword, newPassword) {
   const runtime = getRuntime();
+  const userCryptoRecord = await runtime.utils.userCrypto.buildPasswordRewrap(newPassword);
 
   try {
     return await runtime.api.call(PASSWORD_CHANGE_ENDPOINT, {
       body: {
         currentPassword,
-        newPassword
+        newPassword,
+        userCryptoRecord
       },
       method: "POST"
     });

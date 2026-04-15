@@ -27,6 +27,8 @@ Current wrapped helpers include:
 - `await space.api.userSelfInfo()`
 - `await space.api.call("endpoint_name", { method, query, body, headers, signal })`
 
+`fileRead(...)` accepts one logical path, one `{ path, encoding? }` entry, or a `files` batch. The frontend wrapper now coalesces same-tick reads into one `/api/file_read` request and re-slices the returned files back to each caller, retrying individually when a combined batch fails so shorthand paths and optional missing-file reads still behave like standalone calls. Explicit batching is still best when you already have the file list, but small independent reads no longer fan out 1:1 by default.
+
 Use `space.api.folderDownloadUrl(...)` when the browser should trigger a regular authenticated folder download without buffering the ZIP file into frontend memory first.
 
 When a UI needs user-visible download failure feedback without fetching the archive blob into memory, preflight the request with `space.api.fileInfo(...)` for files or `space.api.call("folder_download", { method: "HEAD", query: { path } })` for folders before starting the browser download.
@@ -48,7 +50,8 @@ When a UI needs user-visible download failure feedback without fetching the arch
 - Use permission-aware APIs, not ad hoc browser path guesses.
 - Use `space.api.call("file_paths", { method: "POST", body: { patterns: [...] } })` for indexed glob discovery; add `access: "write"` for writable-only results.
 - Use `space.api.call("module_list", ...)` only when you need module inventory metadata rather than raw file paths.
-- Use `space.api.call("extensions_load", ...)` when the browser needs module-owned `ext/...` assets resolved with layered override behavior, such as HTML adapters, JS hooks, or the dashboard's `ext/panels/*.yaml` panel manifests.
+- Use `space.api.call("extensions_load", ...)` when the browser needs module-owned `ext/...` assets resolved with layered override behavior, such as HTML adapters or JS hooks. Keep `maxLayer` at the top level of the call, and when batching grouped lookups send ordered `patterns` entries and read grouped results back in that same order.
+- Use `file_paths` plus `fileRead(...)` for readable module metadata files such as `ext/panels/*.yaml` when you only need logical file discovery and file contents rather than the `extensions_load` response shape.
 
 ## Storage Rules
 
@@ -59,7 +62,7 @@ When a UI needs user-visible download failure feedback without fetching the arch
 
 ## Identity Snapshot
 
-- `space.api.userSelfInfo()` returns `{ username, fullName, groups, managedGroups }`.
+- `space.api.userSelfInfo()` returns `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }`.
 - Treat `app/` as the frontend repo tree and `server`, `commands`, and `packaging` as read-only from this frontend skill set.
 - The current user may always write `L2/<username>/` and `L2/<username>/mod/`.
 - The current user may write `L1/<group>/` and `L1/<group>/mod/` for each entry in `managedGroups`.

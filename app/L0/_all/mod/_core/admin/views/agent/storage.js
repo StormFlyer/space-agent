@@ -23,11 +23,14 @@ function getRuntime() {
   if (
     !runtime.utils ||
     typeof runtime.utils !== "object" ||
+    !runtime.utils.userCrypto ||
+    typeof runtime.utils.userCrypto.encryptText !== "function" ||
+    typeof runtime.utils.userCrypto.decryptText !== "function" ||
     !runtime.utils.yaml ||
     typeof runtime.utils.yaml.parse !== "function" ||
     typeof runtime.utils.yaml.stringify !== "function"
   ) {
-    throw new Error("space.utils.yaml is not available.");
+    throw new Error("space.utils userCrypto or yaml helpers are not available.");
   }
 
   return runtime;
@@ -38,18 +41,67 @@ function isMissingFileError(error) {
   return /\bstatus 404\b/u.test(message) || /File not found\./u.test(message);
 }
 
-function normalizeStoredConfig(parsedConfig) {
+async function decodeStoredApiKey(runtime, storedValue) {
+  const rawStoredValue = String(storedValue || "").trim();
+
+  if (!rawStoredValue) {
+    return {
+      locked: false,
+      storedValue: "",
+      value: ""
+    };
+  }
+
+  const value = await runtime.utils.userCrypto.decryptText(rawStoredValue);
+
+  return {
+    locked: rawStoredValue.startsWith("userCrypto:") && !value,
+    storedValue: rawStoredValue,
+    value: String(value || "").trim()
+  };
+}
+
+async function encodeStoredApiKey(runtime, settings = {}) {
+  const nextValue = String(settings.apiKey || "").trim();
+  const storedValue = String(settings.storedApiKeyValue || "").trim();
+
+  if (
+    settings.storedApiKeyLocked === true &&
+    !nextValue &&
+    storedValue.startsWith("userCrypto:")
+  ) {
+    return storedValue;
+  }
+
+  if (!nextValue) {
+    return "";
+  }
+
+  const encryptedValue = await runtime.utils.userCrypto.encryptText(nextValue);
+
+  if (!encryptedValue) {
+    throw new Error("Unable to encrypt admin chat API key because userCrypto is unavailable.");
+  }
+
+  return encryptedValue;
+}
+
+async function normalizeStoredConfig(runtime, parsedConfig) {
   const storedConfig = parsedConfig && typeof parsedConfig === "object" ? parsedConfig : {};
   const rawStoredProvider = storedConfig.llm_provider || storedConfig.provider;
   const storedMaxTokens =
     storedConfig.max_tokens ?? storedConfig.maxTokens ?? config.DEFAULT_ADMIN_CHAT_SETTINGS.maxTokens;
   const provider = config.normalizeAdminChatLlmProvider(rawStoredProvider);
   const localProvider = config.normalizeAdminChatLocalProvider(storedConfig.local_provider || storedConfig.localProvider);
+  const storedApiKey = await decodeStoredApiKey(
+    runtime,
+    storedConfig.api_key || storedConfig.apiKey || config.DEFAULT_ADMIN_CHAT_SETTINGS.apiKey || ""
+  );
 
   return {
     settings: {
       apiEndpoint: String(storedConfig.api_endpoint || storedConfig.apiEndpoint || config.DEFAULT_ADMIN_CHAT_SETTINGS.apiEndpoint || "").trim(),
-      apiKey: String(storedConfig.api_key || storedConfig.apiKey || config.DEFAULT_ADMIN_CHAT_SETTINGS.apiKey || "").trim(),
+      apiKey: storedApiKey.value,
       huggingfaceDtype: String(
         storedConfig.huggingface_dtype || storedConfig.huggingfaceDtype || config.DEFAULT_ADMIN_CHAT_SETTINGS.huggingfaceDtype || ""
       ).trim(),
@@ -60,7 +112,9 @@ function normalizeStoredConfig(parsedConfig) {
       maxTokens: config.normalizeAdminChatMaxTokens(storedMaxTokens),
       model: String(storedConfig.model || config.DEFAULT_ADMIN_CHAT_SETTINGS.model || "").trim(),
       paramsText: String(storedConfig.params || storedConfig.paramsText || config.DEFAULT_ADMIN_CHAT_SETTINGS.paramsText || "").trim(),
-      provider
+      provider,
+      storedApiKeyLocked: storedApiKey.locked,
+      storedApiKeyValue: storedApiKey.storedValue
     },
     systemPrompt: String(
       storedConfig.custom_system_prompt ||
@@ -72,11 +126,11 @@ function normalizeStoredConfig(parsedConfig) {
   };
 }
 
-function buildStoredConfigPayload({ settings, systemPrompt }) {
+async function buildStoredConfigPayload(runtime, { settings, systemPrompt }) {
   const normalizedSystemPrompt = typeof systemPrompt === "string" ? systemPrompt.trim() : "";
   const payload = {
     api_endpoint: String(settings?.apiEndpoint || config.DEFAULT_ADMIN_CHAT_SETTINGS.apiEndpoint || "").trim(),
-    api_key: String(settings?.apiKey || config.DEFAULT_ADMIN_CHAT_SETTINGS.apiKey || "").trim(),
+    api_key: await encodeStoredApiKey(runtime, settings),
     huggingface_dtype: String(settings?.huggingfaceDtype || config.DEFAULT_ADMIN_CHAT_SETTINGS.huggingfaceDtype || "").trim(),
     huggingface_model: String(settings?.huggingfaceModel || config.DEFAULT_ADMIN_CHAT_SETTINGS.huggingfaceModel || "").trim(),
     local_provider: config.normalizeAdminChatLocalProvider(settings?.localProvider),
@@ -98,7 +152,7 @@ export async function loadAdminChatConfig() {
 
   try {
     const result = await runtime.api.fileRead(config.ADMIN_CHAT_CONFIG_PATH);
-    return normalizeStoredConfig(runtime.utils.yaml.parse(String(result?.content || "")));
+    return normalizeStoredConfig(runtime, runtime.utils.yaml.parse(String(result?.content || "")));
   } catch (error) {
     if (isMissingFileError(error)) {
       return createDefaultConfig();
@@ -110,10 +164,15 @@ export async function loadAdminChatConfig() {
 
 export async function saveAdminChatConfig(nextConfig) {
   const runtime = getRuntime();
-  const content = runtime.utils.yaml.stringify(buildStoredConfigPayload(nextConfig));
+  const payload = await buildStoredConfigPayload(runtime, nextConfig);
+  const content = runtime.utils.yaml.stringify(payload);
 
   try {
     await runtime.api.fileWrite(config.ADMIN_CHAT_CONFIG_PATH, content);
+    if (nextConfig?.settings && typeof nextConfig.settings === "object") {
+      nextConfig.settings.storedApiKeyLocked = false;
+      nextConfig.settings.storedApiKeyValue = String(payload.api_key || "").trim();
+    }
   } catch (error) {
     throw new Error(`Unable to save admin chat config: ${error.message}`);
   }

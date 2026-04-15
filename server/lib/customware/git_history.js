@@ -29,7 +29,8 @@ const DEFAULT_AUTHOR_NAME = "Space Agent";
 const DEFAULT_AUTHOR_EMAIL = "space-agent@local";
 const USER_HISTORY_IGNORED_PATHS = [
   "meta/password.json",
-  "meta/logins.json"
+  "meta/logins.json",
+  "meta/user_crypto.json"
 ];
 const pendingCommits = new Map();
 let suppressionDepth = 0;

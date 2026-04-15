@@ -21,7 +21,7 @@ Current files:
 - `group_index.js`: derived group membership and management graph from `group.yaml`
 - `overrides.js`: inheritance ranking, accessible module collection, and override selection
 - `module_inheritance.js`: `/mod/...` file resolution through layered overrides
-- `extension_overrides.js`: extension request-path resolution and grouped batched extension lookup
+- `extension_overrides.js`: extension request-path resolution and ordered grouped extension lookup results keyed by requested pattern groups rather than synthetic ids
 - `file_access.js`: canonical app-file permission model, file operations, and readable-folder download resolution
 - `module_manage.js`: module list, info, install, remove, and Git metadata helpers
 
@@ -78,7 +78,7 @@ Important rules:
 - `layer_limit.js` also accepts `X-Space-Max-Layer` as an explicit request-level override source for module and extension fetches
 - worker-side module lookup must read replicated `file_index` and group shards from the shared `stateSystem`; only the primary watchdog owns filesystem scanning and shard publication
 - frontend HTML anchors resolve through module `ext/html/...` paths and JS hooks resolve through module `ext/js/...` paths
-- modules may also resolve other extension-owned assets through the same ranked `ext/...` override model when the frontend calls `extensions_load` directly; the current first-party example is `ext/panels/*.yaml`
+- modules may also resolve other extension-owned assets through the same ranked `ext/...` override model when the frontend calls `extensions_load` directly; the current first-party example is `ext/panels/*.yaml`, and grouped lookups preserve request order while returning each request's normalized `patterns` with its resolved `extensions`
 - exact same override keys replace lower-ranked entries
 - different extension filenames under the same extension point compose together
 - `module_inheritance.js` and `extension_overrides.js` are the only supported paths for `/mod/...` and extension resolution
@@ -150,8 +150,8 @@ Admin-only access is required for aggregated or cross-user user-layer listings.
 - rollback suppresses scheduling so resetting a worktree does not create a commit loop
 - rollback preserves the previous head in backend-owned history refs when possible so commits after the travelled-to point remain listable for forward travel
 - revert creates a new history commit that undoes the selected commit instead of resetting the worktree to that commit
-- each owner repository has a `.gitignore`; `L2` repositories must ignore `meta/password.json` and `meta/logins.json`, while `L1` group repositories currently use an empty ignore file
-- rollback snapshots and restores the ignored L2 auth files so old commits cannot log the user out or resurrect an old password verifier
+- each owner repository has a `.gitignore`; `L2` repositories must ignore `meta/password.json`, `meta/logins.json`, and `meta/user_crypto.json`, while `L1` group repositories currently use an empty ignore file
+- rollback snapshots and restores the ignored L2 auth and wrapped-user-key files so old commits cannot log the user out, resurrect an old password verifier, or silently replace the current `userCrypto` record
 - `.git` metadata paths are reserved and must not be exposed through app-file APIs, direct app fetches, or path indexes
 
 ## Development Guidance

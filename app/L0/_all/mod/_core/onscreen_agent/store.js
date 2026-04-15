@@ -1285,6 +1285,7 @@ const model = {
   promptHistoryTitle: "Context window",
   promptInput: null,
   promptRuntime: null,
+  skillRuntimePromise: null,
   queuedSubmissions: [],
   rawOutputContent: "",
   rawOutputTitle: "Raw LLM Output",
@@ -2957,6 +2958,58 @@ const model = {
     return this.promptRuntime;
   },
 
+  async ensureSkillRuntime() {
+    if (this.skillRuntimePromise) {
+      return this.skillRuntimePromise;
+    }
+
+    this.skillRuntimePromise = Promise.resolve(skills.installOnscreenSkillRuntime()).catch((error) => {
+      this.skillRuntimePromise = null;
+      throw error;
+    });
+
+    return this.skillRuntimePromise;
+  },
+
+  async ensurePromptDependencies(options = {}) {
+    const shouldShowLoadStatus =
+      options.preserveStatus !== true &&
+      (!this.defaultSystemPrompt || options.forceRefresh === true);
+    const previousStatus = this.status;
+
+    if (shouldShowLoadStatus) {
+      this.status = "Loading default system prompt...";
+    }
+
+    try {
+      await this.ensureSkillRuntime();
+      await this.ensureDefaultSystemPrompt({
+        forceRefresh: options.forceRefresh,
+        preserveStatus: true
+      });
+
+      const storedSystemPrompt = typeof this.systemPrompt === "string" ? this.systemPrompt : "";
+      const normalizedSystemPrompt = agentLlm.extractCustomOnscreenAgentSystemPrompt(
+        storedSystemPrompt,
+        this.defaultSystemPrompt
+      );
+
+      if (normalizedSystemPrompt !== storedSystemPrompt) {
+        this.systemPrompt = normalizedSystemPrompt;
+
+        if (this.systemPromptDraft === storedSystemPrompt) {
+          this.systemPromptDraft = normalizedSystemPrompt;
+        }
+      }
+
+      return this.defaultSystemPrompt;
+    } finally {
+      if (shouldShowLoadStatus && this.status === "Loading default system prompt...") {
+        this.status = previousStatus || "Ready.";
+      }
+    }
+  },
+
   getPromptTransientSections() {
     const transientSections = this.chatRuntime?.transient?.list?.();
     return Array.isArray(transientSections) ? transientSections : [];
@@ -2981,6 +3034,7 @@ const model = {
   },
 
   async rebuildPromptInput(options = {}) {
+    await this.ensurePromptDependencies();
     const history = Array.isArray(options.history) ? options.history : this.history;
     const promptInput = await this.ensurePromptRuntime().build({
       defaultSystemPrompt: this.defaultSystemPrompt,
@@ -2995,6 +3049,7 @@ const model = {
   },
 
   async refreshPromptInputFromHistory(history = this.history) {
+    await this.ensurePromptDependencies();
     const promptInput = await this.ensurePromptRuntime().updateHistory(history, {
       defaultSystemPrompt: this.defaultSystemPrompt,
       options: this.getPromptBuildOptions(),
@@ -3006,6 +3061,7 @@ const model = {
   },
 
   async preparePromptRequest(history = this.history) {
+    await this.ensurePromptDependencies();
     return agentLlm.prepareOnscreenAgentCompletionRequest({
       defaultSystemPrompt: this.defaultSystemPrompt,
       messages: history,
@@ -3112,7 +3168,6 @@ const model = {
         targetWindow: window
       });
       this.syncCurrentChatRuntime();
-      await skills.installOnscreenSkillRuntime();
 
       try {
         const [storedConfig, storedHistory] = await Promise.all([
@@ -3161,19 +3216,6 @@ const model = {
           });
           this.shouldCenterInitialPosition = false;
         }
-
-        this.status = "Loading default system prompt...";
-        this.isLoadingDefaultSystemPrompt = true;
-
-        await this.ensureDefaultSystemPrompt({
-          preserveStatus: true
-        });
-        this.systemPrompt = agentLlm.extractCustomOnscreenAgentSystemPrompt(
-          this.systemPrompt,
-          this.defaultSystemPrompt
-        );
-        this.systemPromptDraft = this.systemPrompt;
-        await this.refreshRuntimeSystemPrompt();
 
         this.isInitialized = true;
         this.status = "Ready.";
@@ -4385,13 +4427,19 @@ const model = {
       maxTokens,
       model: (this.settingsDraft.model || "").trim(),
       paramsText,
-      provider
+      provider,
+      storedApiKeyLocked: this.settings.storedApiKeyLocked === true,
+      storedApiKeyValue: String(this.settings.storedApiKeyValue || "")
     };
     this.systemPrompt = draftPrompt;
     this.systemPromptDraft = draftPrompt;
+    const hadPromptInput = Boolean(this.promptInput);
+    this.applyPromptInput(null);
 
     try {
-      await this.refreshRuntimeSystemPrompt();
+      if (hadPromptInput) {
+        await this.refreshRuntimeSystemPrompt();
+      }
       await this.persistConfig();
       this.status = provider === config.ONSCREEN_AGENT_LLM_PROVIDER.LOCAL
         ? `Local ${getConfiguredLocalProviderLabel(this.settings)} settings updated. Preparing the selected model in the background.`
@@ -4631,6 +4679,7 @@ const model = {
       return;
     }
 
+    const hadPromptInput = Boolean(this.promptInput);
     this.closeComposerActionMenu();
     this.closeRawDialog();
     this.rawOutputContent = "";
@@ -4668,7 +4717,11 @@ const model = {
       this.executionContext.reset();
     }
 
-    await this.refreshRuntimeSystemPrompt();
+    this.applyPromptInput(null);
+
+    if (hadPromptInput) {
+      await this.refreshRuntimeSystemPrompt();
+    }
     await this.persistHistory({
       immediate: true
     });

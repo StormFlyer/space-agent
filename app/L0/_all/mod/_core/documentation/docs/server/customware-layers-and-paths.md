@@ -80,8 +80,8 @@ Current contract:
 - operation previews require write access and return affected-file metadata for travel or revert, plus an operation-specific patch when a single file is requested
 - rollback resets the owner root to a requested commit, preserves the previous head for forward travel when possible, and suppresses history scheduling so rollback does not create a commit loop
 - revert creates a new history commit with inverse changes instead of resetting the owner root to the selected commit
-- owner repos carry a `.gitignore`; `L2` repos ignore `meta/password.json` and `meta/logins.json`, while `L1` repos currently use an empty ignore file
-- rollback preserves ignored L2 auth files so old commits cannot log the user out or restore an old password verifier
+- owner repos carry a `.gitignore`; `L2` repos ignore `meta/password.json`, `meta/logins.json`, and `meta/user_crypto.json`, while `L1` repos currently use an empty ignore file
+- rollback preserves ignored L2 auth and wrapped-user-key files so old commits cannot log the user out, restore an old password verifier, or silently replace the current wrapped browser key
 - `.git` paths are reserved infrastructure and are excluded from path indexes, app-file APIs, and direct app fetches
 
 ## Group Graph

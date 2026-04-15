@@ -49,6 +49,7 @@ Current boot order:
 - `space.fw.createStore`
 - `space.utils.markdown.render(text, target)` as a simple browser wrapper around the shared marked renderer; it replaces `target` contents with a `.markdown` root when a target is provided
 - `space.utils.markdown.parseDocument`
+- `space.utils.userCrypto`, which exposes session-scoped per-user encrypt or decrypt helpers plus password-rewrap support for browser-owned secret fields, and falls back to plaintext pass-through when `SINGLE_USER_APP=true`
 - `space.utils.yaml.parse` and `stringify`, backed by the shared project-owned lightweight YAML utility in `js/yaml-lite.js` so browser-side YAML behavior matches the server imports while still supporting multiline block scalars, compact list-item maps, and readable nested structured output
 - `space.proxy`
 - `space.download`
@@ -56,12 +57,14 @@ Current boot order:
 
 Current API helper contract:
 
-- `space.api.userSelfInfo()` is the canonical frontend identity snapshot; frontend agents should use `username`, `managedGroups`, and `_admin` membership in `groups` to infer writable app roots before choosing where to store files or modules
+- `space.api.userSelfInfo()` is the canonical frontend identity snapshot; it now also returns the backend `sessionId` plus `userCryptoKeyId` and `userCryptoState`, and frontend agents should still use `username`, `managedGroups`, and `_admin` membership in `groups` to infer writable app roots before choosing where to store files or modules
+- `space.api.fileRead(...)` accepts one logical path, one `{ path, encoding? }` entry, or a `files` batch, and `js/api-client.js` now coalesces same-tick file reads into one `/api/file_read` request before re-slicing the returned files back to each caller; when a combined batch fails, it retries the queued reads individually so shorthand paths like `~/...` and optional missing-file callers keep their original per-call behavior
 - `space.api.fileList(pathOrOptions, recursive?)` accepts normal path strings and an options object with `access: "write"`, `writableOnly: true`, or `gitRepositories: true` for server-confirmed writable discovery without exposing reserved `.git` metadata
 - `space.api.folderDownloadUrl(pathOrOptions)` builds the same-origin attachment URL for a permission-checked folder ZIP download without fetching the archive into browser memory
 - `space.api.gitHistoryList(pathOrOptions, limit?)`, `space.api.gitHistoryDiff(...)`, `space.api.gitHistoryPreview(...)`, `space.api.gitHistoryRollback(...)`, and `space.api.gitHistoryRevert(...)` call the optional server-owned writable-layer history endpoints; availability depends on `CUSTOMWARE_GIT_HISTORY`
 - `gitHistoryList` accepts `limit`, `offset`, and `fileFilter` when passed an options object, returns only commit metadata for the requested page, and includes `currentHash` so UIs can distinguish the current point from preserved forward-travel refs
 - `gitHistoryPreview` accepts `operation: "travel" | "revert"` plus optional `filePath`; it returns affected-file metadata and, when a file is provided, the operation-specific patch
+- `js/api-client.js` also dedupes identical in-flight `extensions_load`, `file_read`, `file_info`, `file_list`, `file_paths`, and `user_self_info` requests by request shape so duplicate boot-time callers share one backend round trip
 - framework-managed external `fetch(...)` calls and `space.fetchExternal(...)` try the browser's direct request first; when a direct cross-origin attempt fails and the `/api/proxy` retry succeeds, the frontend remembers that origin for the rest of the runtime and routes later requests for the same origin through the backend immediately
 - same-origin `fetch(...)` calls made after the fetch proxy is installed automatically carry the highest observed `Space-State-Version`, and when the router returns its bounded retryable sync `503` with `Retry-After: 0`, `fetch-proxy.js` retries the request a few times before surfacing the failure to callers
 - frontend modules and widgets must not hardcode third-party CORS proxy services; use direct `fetch(...)` or `space.fetchExternal(...)` for remote reads and reserve `space.proxy.buildUrl(...)` for cases that need a same-origin proxied URL string
@@ -92,6 +95,7 @@ Important contracts:
 - extension callers should name only the seam; the runtime chooses the `html/` or `js/` subfolder implicitly
 - wrapped functions expose `/start` and `/end` hook points and become async
 - uncached HTML `<x-extension>` lookups are batched to one `/api/extensions_load` request per flush window; by default that window ends on the next animation frame, and frontend constant `HTML_EXTENSIONS_LOAD_BATCH_WAIT_MS` in `js/extensions.js` adds an extra wait window in milliseconds before the frame-aligned flush
+- `extensions_load` transport keeps `maxLayer` at the top level of the call; grouped requests carry only ordered `patterns` arrays, and grouped responses come back in that same order with the matching `patterns` plus resolved `extensions` instead of synthetic transport keys
 - JS hook lookups do not use that frame wait window; they request extension paths immediately because hook callers await them directly
 - empty extension lookups are cached as valid results
 - `moduleResolution.js` preserves page-level `maxLayer` for `/mod/...` and `/api/extensions_load` requests

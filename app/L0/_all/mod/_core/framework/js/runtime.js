@@ -5,6 +5,7 @@ import { installFetchProxy } from "./fetch-proxy.js";
 import * as markdown from "./markdown-frontmatter.js";
 import { buildProxyUrl, isProxyableExternalUrl } from "./proxy-url.js";
 import { getFrontendServerConfigValues } from "./server-config.js";
+import * as userCrypto from "/mod/_core/user_crypto/user-crypto.js";
 import * as yaml from "./yaml-lite.js";
 
 export function initializeRuntime(options = {}) {
@@ -65,6 +66,17 @@ export function initializeRuntime(options = {}) {
       yaml: {
         parse: yaml.parseSimpleYaml,
         stringify: yaml.serializeSimpleYaml
+      },
+      userCrypto: {
+        buildPasswordRewrap: userCrypto.buildPasswordRewrap,
+        clearSession: userCrypto.clearUserCryptoSession,
+        decryptBytes: userCrypto.decryptBytes,
+        decryptText: userCrypto.decryptText,
+        encryptBytes: userCrypto.encryptBytes,
+        encryptText: userCrypto.encryptText,
+        initialize: userCrypto.initializeUserCrypto,
+        isReady: userCrypto.isUserCryptoReady,
+        status: userCrypto.getUserCryptoStatus
       }
     },
     fetchExternal(targetUrl, init) {

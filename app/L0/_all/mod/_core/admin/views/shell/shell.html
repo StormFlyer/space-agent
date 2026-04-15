@@ -60,6 +60,8 @@
                   </button>
                 </header>
 
+                <div id="_core/onscreen_menu/bar_start" class="admin-injected-controls" aria-label="Active admin panel controls"></div>
+
                 <div class="admin-stage">
                   <section
                     id="admin-panel-dashboard"
@@ -93,6 +95,18 @@
                   >
                     <x-component path="/mod/_core/admin/views/files/panel.html"></x-component>
                   </section>
+
+                  <template x-if="$store.adminPage.isTabActive('time_travel')">
+                    <section
+                      id="admin-panel-time_travel"
+                      class="admin-panel-shell admin-panel-shell-time-travel"
+                      x-cloak
+                      role="tabpanel"
+                      aria-labelledby="admin-tab-time_travel"
+                    >
+                      <x-component path="/mod/_core/admin/views/time_travel/panel.html"></x-component>
+                    </section>
+                  </template>
 
                   <section
                     id="admin-panel-modules"

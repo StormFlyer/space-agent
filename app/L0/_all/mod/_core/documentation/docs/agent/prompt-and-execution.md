@@ -12,6 +12,16 @@ This doc focuses on how the onscreen agent builds model input and how execution 
 - `app/L0/_all/mod/_core/onscreen_agent/api.js`
 - `app/L0/_all/mod/_core/promptinclude/promptinclude.js`
 
+## Prompt Boot Timing
+
+The overlay no longer assembles full prompt state during plain page-load init.
+
+Current timing:
+
+- init restores config, browser UI state, and saved history
+- the first prompt-dependent action such as send, prompt-history open, or another explicit rebuild path then lazily loads the default system prompt, installs the onscreen skill runtime, and runs prompt-section assembly
+- later prompt rebuilds reuse the same prompt runtime and only refresh the parts that changed
+
 ## Prepared Prompt Order
 
 The prepared prompt order is:
@@ -26,6 +36,7 @@ Important details:
 - example messages count toward token totals but are never replaced by compaction
 - owner modules may prepend extra system-prompt sections before the skill catalog; `_core/promptinclude` currently injects a stable `## prompt includes` instruction block there and then appends readable `*.system.include.md` files as extra system-prompt sections
 - transient runtime context is emitted as its own trailing prepared message when present
+- `_core/onscreen_agent` currently adds one short lowercase `chat display mode` transient section only in compact mode so the model sees `chat is in compact mode` and `keep replies short unless more detail is needed for correctness or the user asks for it`; full mode adds no display-mode section
 - `_core/promptinclude` may also append a `prompt includes` transient section that lists readable `**/*.transient.include.md` files in alphabetical full-path order and renders each file body in its own fenced block
 
 ## Message Markers
@@ -64,6 +75,7 @@ Important execution rules:
 - execution blocks should be preceded by one short narration line
 - `_____javascript` must appear on its own line
 - execution output is fed back as `_____framework`
+- the live firmware prompt distinguishes runtime identity fields from persisted YAML keys: `space.api.userSelfInfo()` exposes `fullName`, but `~/user.yaml` stores `full_name`, so profile edits should update `full_name`, not `fullName`
 - if an execution block returns no result and prints no logs, the transcript says `execution returned no result and no console logs were printed`
 - multiline results are labeled with `result↓`
 - structured results should prefer YAML over JSON when the shared serializer can express them cleanly
@@ -101,4 +113,4 @@ Important extension families:
 - final prompt-input assembly
 - execution-plan validation hooks
 
-Current first-party examples include `_core/spaces` for current-space instructions and `_core/promptinclude` for persistent split system/transient include discovery. Module-specific workflow policy still belongs in owner-module skills or owner-module `_core/onscreen_agent/...` JS hooks.
+Current first-party examples include `_core/spaces` for current-space instructions, `_core/promptinclude` for persistent split system/transient include discovery, and the `_core/onscreen_agent` display-mode transient hook for compact-mode reply guidance. Module-specific workflow policy still belongs in owner-module skills or owner-module `_core/onscreen_agent/...` JS hooks.

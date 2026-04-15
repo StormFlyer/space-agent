@@ -25,6 +25,7 @@ Current module-local docs in the app tree:
 
 - `app/L0/_all/mod/_core/agent/AGENTS.md`
 - `app/L0/_all/mod/_core/user/AGENTS.md`
+- `app/L0/_all/mod/_core/user_crypto/AGENTS.md`
 - `app/L0/_all/mod/_core/dashboard/AGENTS.md`
 - `app/L0/_all/mod/_core/dashboard_welcome/AGENTS.md`
 - `app/L0/_all/mod/_core/documentation/AGENTS.md`
@@ -43,6 +44,7 @@ Current module-local docs in the app tree:
 - `app/L0/_all/mod/_core/admin/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/files/AGENTS.md`
+- `app/L0/_all/mod/_core/admin/views/time_travel/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_menu/AGENTS.md`
@@ -113,12 +115,13 @@ Current major first-party modules under `app/L0/_all/mod/_core/`:
 - `login_hooks/`: headless authenticated-bootstrap lifecycle hooks for first-login and same-origin `/login` arrival events, with a client-owned `~/meta/login_hooks.json` marker and feature-owned onboarding hooks such as the spaces module's first-login `Big Bang` onboarding-space bootstrap
 - `visual/`: shared visual language, canvas, chrome, buttons, dialog helpers, and conversation rendering primitives
 - `router/`: root routed shell for the authenticated app; route-level frame width, height or scroll policy, the shared shell-owned top-clearance budget, and other shell-owned layout overrides belong here rather than in feature modules, while routed pages own their own vertical spacing, any route-specific bottom breathing room, and local card padding but should avoid shell-compensation horizontal gutters at the route root
-- `admin/`: firmware-backed admin shell and panels
+- `admin/`: firmware-backed admin shell and panels, including a mirrored `[id="_core/onscreen_menu/bar_start"]` inject host above admin tab content so embedded routed surfaces can reuse their existing injected controls inside `/admin`
 - `agent/`: routed first-party agent information and user-local personality include editor, kept self-contained inside the module and advertised to the dashboard through `ext/panels/agent.yaml`
 - `user/`: routed first-party account settings page that edits `~/user.yaml` directly for `full_name`, keeps password rotation server-owned through `password_change`, and advertises itself through `ext/panels/user.yaml`
+- `user_crypto/`: headless per-user encryption helper that restores session-scoped unlock state from login bootstrap and exposes `space.utils.userCrypto` for small encrypted user secrets, while short-circuiting to plaintext pass-through in `SINGLE_USER_APP=true`
 - `file_explorer/`: reusable app-file browser component, routed Files page, dashboard panel manifest, and routed header-menu item
 - `documentation/`: supplemental agent-facing documentation docs, the focused-read documentation helper, and the documentation skill that carries the top-level docs map
-- `panels/`: headless panel-manifest discovery plus the dashboard-injected Panels section, backed by permission-aware `ext/panels/*.yaml` metadata loaded through the shared extension resolver
+- `panels/`: headless panel-manifest discovery plus the dashboard-injected Panels section, backed by permission-aware `ext/panels/*.yaml` metadata discovered through the app-file APIs and batch-read through the shared frontend file runtime
 - `promptinclude/`: headless promptinclude discovery and onscreen-agent prompt injection for readable `*.system.include.md` and `*.transient.include.md` app files
 - `onscreen_agent/`: floating routed overlay agent and the first-party user-facing chat runtime
 - `onscreen_menu/`: reserved routed shell header bar, Home shortcut to the empty default route, left and right shell-control seams, and `_core/onscreen_menu/items` dropdown action seam
@@ -210,7 +213,7 @@ JS extension hooks:
 Module-owned extension metadata:
 
 - modules may also ship lightweight metadata manifests under other `ext/` folders when that data should follow the same readable-layer permissions and same-path override rules as HTML and JS extensions
-- the current first-party example is `ext/panels/*.yaml`, which the dashboard panel index discovers through `/api/extensions_load`
+- the current first-party example is `ext/panels/*.yaml`, which the dashboard panel index discovers through `file_paths` and batch-reads through `fileRead(...)`
 - keep those metadata manifests small and display-oriented; they are extension-resolved module assets, not a second general-purpose storage system
 
 Skill-context tags:
@@ -225,7 +228,7 @@ Resolution and overrides:
 
 - `/api/extensions_load` resolves extension files from the accessible `L0 -> L1 -> L2` inheritance chain
 - uncached HTML `<x-extension>` lookups batch until the next animation frame by default; frontend constant `HTML_EXTENSIONS_LOAD_BATCH_WAIT_MS` in `app/L0/_all/mod/_core/framework/js/extensions.js` adds an extra wait window before that frame-aligned flush
-- JS extension hooks do not use that wait window; their lookup requests go out immediately because the wrapped calls await them directly
+- JS extension hooks do not use that wait window; their lookup requests go out immediately because the wrapped calls await them directly, but the runtime dedupes identical in-flight extension loads
 - `maxLayer` constrains only module and extension resolution
 - identical module-relative extension file paths override lower-ranked layers
 - different filenames under the same extension point compose together
@@ -263,11 +266,12 @@ Runtime guidance:
 - framework-backed pages that boot through `/mod/_core/framework/js/initFw.js` already initialize the runtime before feature modules mount
 - `globalThis.space` is scoped to the current window or iframe only; do not publish it into other browsing contexts
 - use `space.api` for authenticated backend calls
+- prefer the shared `space.api` helpers over feature-local request batching; same-tick `fileRead(...)` calls coalesce automatically, preserve per-call missing-file behavior by retrying individually when a combined batch fails, and identical in-flight file, identity, and extension-load requests are deduped by the runtime
 - use `space.api.folderDownloadUrl(...)` when a folder download should stay as a browser attachment instead of fetching the archive blob into frontend memory
 - first-party framework, shell, skill-helper, and bundled demo assets required for normal app use must be local `/mod/...` files, server page assets, or inline code; do not load required scripts, styles, fonts, images, or other framework assets from CDNs
 - keep feature-owned runtime namespaces under `space` explicit and narrow; `_core/spaces` owns `space.current` for current-space widget authoring, compact widget catalog discovery, widget-definition reads that expose plain metadata plus numbered renderer lines directly in the response, live rendered-widget HTML inspection through `seeWidget(...)`, widget patch helpers, explicit widget reload checks, camera-only viewport reposition, compact widget write results, post-write transient envelopes that carry both stripped rendered HTML and numbered source readback, live widget-state descriptors including render health, and batch layout or toggle or removal helpers plus `space.spaces` for persisted space CRUD, loaded-space collections, lower-level widget or folder-copy duplication or storage helpers, the matching reload helper that accepts `resetCamera` for single-pass onboarding example installs plus the separate current-space viewport reposition helper for camera-only rescroll, and spaces-owned prompt context injection that is limited to current-space agent instructions while widget workflow guidance and catalog discovery stay tool-driven, `_core/onscreen_agent` owns `space.onscreenAgent` for overlay display control plus both normal prompt submission and guarded preset-button prompt submission, and agent surfaces publish the active thread snapshot at `space.chat`, including the non-persisted `space.chat.transient` registry for mutable prompt context blocks, the non-persisted `space.chat.skills` registry for explicitly loaded system or transient skills, and a prepared-prompt contract where system prompt text comes first, optional example user or assistant messages follow before live history, real human user turns are framed as `_____user`, framework-generated follow-up turns are framed as `_____framework`, and mutable runtime context is emitted as a separate trailing `_____transient` message
 - shared visual helpers may publish small reusable UI entry points under `space.visual`; the current shared selector contract is `_core/visual/icons/icon-color-selector.js`, which registers `space.visual.openIconColorSelector(options)` after that module is imported
-- use `space.api.userSelfInfo()` as the canonical browser-side identity snapshot; it returns `{ username, fullName, groups, managedGroups }`, and frontend code should derive writable app roots from that data plus the standard layer rules
+- use `space.api.userSelfInfo()` as the canonical browser-side identity snapshot; it returns `{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }`, and frontend code should derive writable app roots and per-session unlock behavior from that data plus the standard layer rules
 - use `space.config` for frontend reads of backend parameters that were explicitly marked `frontend_exposed`
 - use `space.utils.markdown.render(text, target)` for lightweight shared markdown rendering into a `.markdown` wrapper and `space.utils.markdown.parseDocument(...)` for frontmatter parsing; keep feature-local presentation in the owning module's CSS
 - use `space.utils.yaml.parse(...)` and `space.utils.yaml.stringify(...)` for frontend YAML parsing and serialization owned by browser modules; this runtime surface is backed by the shared project-owned lightweight YAML utility in `_core/framework/js/yaml-lite.js`, which the server also imports directly so nested maps lists block scalars and standard YAML quoting stay consistent across both runtimes
@@ -319,6 +323,7 @@ Detailed visual subsystem rules now live in `app/L0/_all/mod/_core/visual/AGENTS
 - `admin/` owns the firmware-backed admin shell, panels, and admin-specific skills/runtime glue; see `app/L0/_all/mod/_core/admin/AGENTS.md`
 - `admin/views/agent/` owns the admin-side agent surface; see `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
 - `admin/views/files/` owns the admin Files tab adapter that mounts `_core/file_explorer`; see `app/L0/_all/mod/_core/admin/views/files/AGENTS.md`
+- `admin/views/time_travel/` owns the admin Time Travel tab adapter that mounts `_core/time_travel`; see `app/L0/_all/mod/_core/admin/views/time_travel/AGENTS.md`
 - `admin/views/modules/` owns the firmware-backed modules panel; see `app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 - `onscreen_agent/` owns the floating routed overlay agent; see `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `onscreen_menu/` owns the routed shell menu extension and feature-owned item seam; see `app/L0/_all/mod/_core/onscreen_menu/AGENTS.md`

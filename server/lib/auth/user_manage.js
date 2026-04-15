@@ -5,6 +5,11 @@ import { createPasswordVerifier } from "./passwords.js";
 import { loadAuthKeys } from "./keys_manage.js";
 import { recordAppPathMutations } from "../customware/git_history.js";
 import {
+  deleteUserCryptoArtifacts,
+  invalidateUserCryptoRecord,
+  writeReadyUserCryptoRecord
+} from "./user_crypto.js";
+import {
   buildUserAbsolutePath,
   ensureUserStructure,
   normalizeUsername,
@@ -119,7 +124,12 @@ function isGuestUsername(username) {
 function setUserPassword(projectRoot, username, password, options = {}) {
   const authKeys = loadAuthKeys(projectRoot);
   const normalizedUsername = normalizeUsername(username);
+  const invalidateUserCrypto = options.invalidateUserCrypto !== false;
   const runtimeParams = options.runtimeParams || null;
+  const userCryptoRecord =
+    options.userCryptoRecord && typeof options.userCryptoRecord === "object"
+      ? options.userCryptoRecord
+      : null;
 
   if (!normalizedUsername) {
     throw new Error(`Invalid username: ${String(username || "")}`);
@@ -152,6 +162,16 @@ function setUserPassword(projectRoot, username, password, options = {}) {
     },
     [`/app/L2/${normalizedUsername}/meta/password.json`, `/app/L2/${normalizedUsername}/meta/logins.json`]
   );
+
+  if (userCryptoRecord) {
+    writeReadyUserCryptoRecord(projectRoot, normalizedUsername, userCryptoRecord, {
+      runtimeParams
+    });
+  } else if (invalidateUserCrypto) {
+    invalidateUserCryptoRecord(projectRoot, normalizedUsername, {
+      runtimeParams
+    });
+  }
 
   return {
     userDir,
@@ -211,6 +231,7 @@ function deleteUser(projectRoot, username, options = {}) {
     force: true,
     recursive: true
   });
+  deleteUserCryptoArtifacts(projectRoot, normalizedUsername);
   recordAppPathMutations(
     {
       projectRoot,

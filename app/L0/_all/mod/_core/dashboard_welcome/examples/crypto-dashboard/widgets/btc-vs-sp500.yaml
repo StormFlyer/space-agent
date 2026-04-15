@@ -313,6 +313,55 @@ renderer: |-
       return [...byDate.values()].sort((left, right) => left.timestamp - right.timestamp)
     }
 
+    function repairNonPositiveSeries(points) {
+      const repaired = points
+        .filter((point) => Number.isFinite(point?.timestamp) && Number.isFinite(point?.value))
+        .sort((left, right) => left.timestamp - right.timestamp)
+        .map((point) => ({
+          timestamp: point.timestamp,
+          value: Number(point.value)
+        }))
+
+      let index = 0
+
+      while (index < repaired.length) {
+        if (repaired[index].value > 0) {
+          index += 1
+          continue
+        }
+
+        const gapStart = index
+
+        while (index < repaired.length && !(repaired[index].value > 0)) {
+          index += 1
+        }
+
+        const previousPoint = gapStart > 0 ? repaired[gapStart - 1] : null
+        const nextPoint = index < repaired.length ? repaired[index] : null
+
+        for (let fillIndex = gapStart; fillIndex < index; fillIndex += 1) {
+          if (previousPoint && nextPoint) {
+            const span = Math.max(nextPoint.timestamp - previousPoint.timestamp, 1)
+            const progress = (repaired[fillIndex].timestamp - previousPoint.timestamp) / span
+            repaired[fillIndex].value =
+              previousPoint.value + (nextPoint.value - previousPoint.value) * progress
+            continue
+          }
+
+          if (previousPoint) {
+            repaired[fillIndex].value = previousPoint.value
+            continue
+          }
+
+          if (nextPoint) {
+            repaired[fillIndex].value = nextPoint.value
+          }
+        }
+      }
+
+      return repaired.filter((point) => point.value > 0)
+    }
+
     function mergeSeries(bitcoinSeries, sp500Series) {
       const merged = []
       let sp500Index = 0
@@ -504,8 +553,8 @@ renderer: |-
 
         const bitcoinData = await bitcoinResponse.json()
         const sp500Csv = await sp500Response.text()
-        const bitcoinSeries = normalizeBitcoinPoints(bitcoinData?.prices || [])
-        const sp500Series = parseFredCsv(sp500Csv)
+        const bitcoinSeries = repairNonPositiveSeries(normalizeBitcoinPoints(bitcoinData?.prices || []))
+        const sp500Series = repairNonPositiveSeries(parseFredCsv(sp500Csv))
         const points = mergeSeries(bitcoinSeries, sp500Series)
 
         if (points.length < 7) {

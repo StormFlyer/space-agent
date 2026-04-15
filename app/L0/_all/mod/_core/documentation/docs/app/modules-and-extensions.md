@@ -18,6 +18,7 @@ This doc covers how browser code is delivered and composed.
 - `app/L0/_all/mod/_core/router/AGENTS.md`
 - `app/L0/_all/mod/_core/time_travel/AGENTS.md`
 - `app/L0/_all/mod/_core/user/AGENTS.md`
+- `app/L0/_all/mod/_core/user_crypto/AGENTS.md`
 - `server/lib/customware/AGENTS.md`
 - `server/api/AGENTS.md`
 
@@ -104,7 +105,7 @@ Current first-party shell extension example:
 - `_core/agent`, `_core/user`, `_core/file_explorer`, `_core/time_travel`, and `_core/admin` each contribute their own routed header-menu dropdown item through `_core/onscreen_menu/items` with `data-order` values `100`, `150`, `200`, `300`, and `400` instead of being hardcoded into the menu shell
 - `_core/spaces` now defines its current-space control cluster directly inside the spaces route and injects it into `[id="_core/onscreen_menu/bar_start"]` through `x-inject`; that keeps the controls route-owned so they are removed when the route unmounts, while still keeping Back, the space-title toggle, Rearrange, and a confirmed clear-all-widgets trash action together in shared shell chrome, with the metadata editor popover anchored to the title button instead of owning a separate fixed page overlay
 - `_core/time_travel` keeps its page title copy inside the routed page but injects its route-owned Refresh and repository-picker controls into `[id="_core/onscreen_menu/bar_start"]` through `x-inject`, keeping those controls in shared shell chrome without turning them into persistent shell extensions
-- the `_core/admin` shell keeps its admin tabs in the left-pane topbar and ends that topbar with a leave-admin icon button that returns to the current iframe URL
+- the `_core/admin` shell keeps its admin tabs in the left-pane topbar, mirrors that same `[id="_core/onscreen_menu/bar_start"]` inject host above active admin content so embedded routed surfaces can reuse their existing injected controls, and ends the topbar with a leave-admin icon button that returns to the current iframe URL
 
 ## JavaScript Extension Hooks
 
@@ -119,6 +120,7 @@ Rules:
 - feature-specific prompt or execution behavior for the onscreen agent should be supplied from the owning module through `_core/onscreen_agent/...` extension seams, not hardcoded into `_core/onscreen_agent`
 - headless helper modules are valid first-party modules too: `_core/promptinclude` has no route or UI, but it extends `_core/onscreen_agent/llm.js/buildOnscreenAgentSystemPromptSections` and `_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections` to auto-inject readable `**/*.system.include.md` files into the overlay system prompt and readable `**/*.transient.include.md` files into the overlay transient context
 - `_core/login_hooks` is another headless helper module: it extends `_core/framework/initializer.js/initialize/end`, checks for the client-owned `~/meta/login_hooks.json` marker, dispatches `_core/login_hooks/first_login` once when that marker is absent, and dispatches `_core/login_hooks/any_login` when the authenticated shell was reached directly from `/login`; `_core/spaces` currently consumes `_core/login_hooks/first_login` through `ext/js/_core/login_hooks/first_login/big-bang-space.js` to copy or reuse the module-owned `Big Bang` onboarding space and rewrite the root-shell default route before dashboard loads
+- `_core/user_crypto` is a headless runtime helper module: it extends `_core/framework/initializer.js/initialize/end`, reads `space.api.userSelfInfo()` for the current backend `sessionId` plus `userCrypto` state, restores the unlocked browser key from session-only storage when available, and signs the browser out when the backend reports that the user still needs a first-login `userCrypto` provisioning run at `/login`
 - `_core/open_router` is a headless provider-policy module: it extends `_core/onscreen_agent/api.js/prepareOnscreenAgentApiRequest/end` and `_core/admin/views/agent/api.js/prepareAdminAgentApiRequest/end`, detects when API mode targets an OpenRouter upstream endpoint, and applies the OpenRouter-specific request headers there instead of hardcoding them inside the chat runtimes
 
 Uncached HTML `<x-extension>` lookups are grouped before they hit `/api/extensions_load`:
@@ -126,6 +128,7 @@ Uncached HTML `<x-extension>` lookups are grouped before they hit `/api/extensio
 - by default the frontend flushes the lookup queue on the next animation frame
 - frontend constant `HTML_EXTENSIONS_LOAD_BATCH_WAIT_MS` in `app/L0/_all/mod/_core/framework/js/extensions.js` adds an extra wait window in milliseconds before that frame-aligned flush
 - when a frame does not arrive, the frontend falls back to a short timeout so the queue still drains
+- the request body keeps `maxLayer` once for the whole call, sends only ordered `patterns` groups per batched lookup, and receives grouped results back in that same order with matching `patterns` and resolved `extensions`
 
 JS hook lookups do not use that frame wait window. Hook callers await them directly, so the frontend requests JS extension paths immediately instead of delaying them for batching.
 
@@ -137,13 +140,13 @@ Not every extension-resolved file is an HTML adapter or JS hook.
 
 Modules may also store lightweight metadata manifests under other `ext/` folders when that data should follow the same readable-layer permissions and same-path override rules as HTML and JS extensions.
 
-Current first-party example:
+Current first-party examples:
 
-- `_core/panels` discovers dashboard panel manifests from `mod/<author>/<repo>/ext/panels/*.yaml` through `extensions_load` and renders them as the dashboard's secondary `Panels` section beneath the spaces launcher, reusing the same centered uppercase inset divider heading treatment as `Spaces` while keeping a clearly visible extra top gap from the spaces cards above it instead of presenting the panel row as primary content cards
+- `_core/panels` discovers dashboard panel manifests from `mod/<author>/<repo>/ext/panels/*.yaml` through `file_paths`, batch-reads them through `file_read`, collapses same `modulePath + manifestName` layered duplicates to one effective manifest, and renders them as the dashboard's secondary `Panels` section beneath the spaces launcher, reusing the same centered uppercase inset divider heading treatment as `Spaces` while keeping a clearly visible extra top gap from the spaces cards above it instead of presenting the panel row as primary content cards
 - `_core/agent` publishes `ext/panels/agent.yaml` so the dashboard can launch the routed agent settings page without hardcoding it into dashboard or router; that route stays self-contained inside the module, keeps the astronaut info card, exposes only the external repo CTA, and edits the raw `~/conf/personality.system.include.md` prompt-include file
 - `_core/file_explorer` publishes `ext/panels/file_explorer.yaml` for the `#/file_explorer` Files route and also exposes `component.html` so the admin Files tab can reuse the same app-file browser without owning a second implementation
 - `_core/huggingface` publishes `ext/panels/huggingface.yaml` so the dashboard can launch the `Local LLM` page backed by the routed Hugging Face browser runtime
-- `_core/time_travel` publishes `ext/panels/time_travel.yaml` for the `#/time_travel` route, where the current user starts on their own `~` Git history, can pick another writable `L1` or `L2` history repository, page and filter commits, inspect file diffs, travel back to a commit, or revert a commit as a new change
+- `_core/time_travel` publishes `ext/panels/time_travel.yaml` for the `#/time_travel` route, where the current user starts on their own `~` Git history, can pick another writable `L1` or `L2` history repository, page and filter commits, inspect file diffs, travel back to a commit, or revert a commit as a new change; the admin Time Travel tab reuses that same `view.html` plus the mirrored admin inject host instead of forking a second history UI
 - `_core/user` publishes `ext/panels/user.yaml` so the dashboard can launch the routed account settings page, where the current user edits `~/user.yaml` directly for `full_name` while password rotation stays server-owned through `/api/password_change`
 - `_core/webllm` still has a direct manual `#/webllm` route, but it does not publish a dashboard panel manifest
 - each panel manifest defines display metadata such as `name`, `path`, optional `description`, optional `icon`, and optional `color`

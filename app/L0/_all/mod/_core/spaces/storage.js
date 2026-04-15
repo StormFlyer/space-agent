@@ -34,6 +34,11 @@ import {
   normalizeSpaceTitle
 } from "/mod/_core/spaces/space-metadata.js";
 
+const LISTED_SPACE_RECORD_REUSE_WINDOW_MS = 5000;
+
+let recentListedSpaceRecords = new Map();
+let recentListedSpaceRecordsAt = 0;
+
 function ensureSpaceRuntime() {
   if (!globalThis.space || !globalThis.space.api || !globalThis.space.utils?.yaml) {
     throw new Error("Spaces runtime requires the authenticated Space browser runtime.");
@@ -277,6 +282,36 @@ function cloneSpaceRecord(spaceRecord) {
       Object.entries(spaceRecord.widgets || {}).map(([widgetId, widgetRecord]) => [widgetId, cloneWidgetRecord(widgetRecord)])
     )
   };
+}
+
+function clearRecentListedSpaceRecords() {
+  recentListedSpaceRecords = new Map();
+  recentListedSpaceRecordsAt = 0;
+}
+
+function setRecentListedSpaceRecords(recordsById) {
+  recentListedSpaceRecords = new Map(
+    [...(recordsById instanceof Map ? recordsById.entries() : [])]
+      .filter(([spaceId, spaceRecord]) => Boolean(spaceId) && spaceRecord)
+      .map(([spaceId, spaceRecord]) => [spaceId, cloneSpaceRecord(spaceRecord)])
+  );
+  recentListedSpaceRecordsAt = recentListedSpaceRecords.size ? Date.now() : 0;
+}
+
+function readRecentListedSpaceRecord(spaceId) {
+  const normalizedSpaceId = normalizeOptionalSpaceId(spaceId);
+
+  if (!normalizedSpaceId || !recentListedSpaceRecords.size) {
+    return null;
+  }
+
+  if (Date.now() - recentListedSpaceRecordsAt > LISTED_SPACE_RECORD_REUSE_WINDOW_MS) {
+    clearRecentListedSpaceRecords();
+    return null;
+  }
+
+  const cachedRecord = recentListedSpaceRecords.get(normalizedSpaceId);
+  return cachedRecord ? cloneSpaceRecord(cachedRecord) : null;
 }
 
 function formatSpaceUpdatedAtLabel(value) {
@@ -1187,6 +1222,7 @@ async function writeManifestFile(spaceRecord) {
     path: buildSpaceManifestPath(normalizedRecord.id)
   });
 
+  clearRecentListedSpaceRecords();
   return normalizedRecord;
 }
 
@@ -1275,13 +1311,13 @@ function createLegacyRendererSource(definition) {
   ].join("\n");
 }
 
-async function migrateLegacyWidgetModules(spaceId) {
+async function migrateLegacyWidgetModules(spaceId, widgetPaths = null) {
   const runtime = ensureSpaceRuntime();
-  const widgetPaths = await listSpaceWidgetPaths(spaceId);
-  const legacyPaths = widgetPaths.filter((path) => String(path || "").endsWith(".js"));
+  const resolvedWidgetPaths = Array.isArray(widgetPaths) ? widgetPaths : await listSpaceWidgetPaths(spaceId);
+  const legacyPaths = resolvedWidgetPaths.filter((path) => String(path || "").endsWith(".js"));
 
   if (!legacyPaths.length) {
-    return;
+    return false;
   }
 
   const nextFiles = [];
@@ -1322,20 +1358,12 @@ async function migrateLegacyWidgetModules(spaceId) {
   if (deletePaths.length) {
     await runtime.api.fileDelete({ paths: deletePaths });
   }
+
+  return nextFiles.length > 0 || deletePaths.length > 0;
 }
 
-async function readWidgetFiles(spaceId) {
+function parseWidgetFiles(spaceId, files = []) {
   const runtime = ensureSpaceRuntime();
-  const widgetPaths = (await listSpaceWidgetPaths(spaceId)).filter((path) => String(path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION));
-
-  if (!widgetPaths.length) {
-    return {};
-  }
-
-  const readResult = await runtime.api.fileRead({
-    files: widgetPaths
-  });
-  const files = Array.isArray(readResult?.files) ? readResult.files : [];
   const widgets = {};
 
   files.forEach((file) => {
@@ -1353,6 +1381,22 @@ async function readWidgetFiles(spaceId) {
   });
 
   return widgets;
+}
+
+async function readWidgetFiles(spaceId, widgetPaths = null) {
+  const runtime = ensureSpaceRuntime();
+  const yamlWidgetPaths = (Array.isArray(widgetPaths) ? widgetPaths : await listSpaceWidgetPaths(spaceId))
+    .filter((path) => String(path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION));
+
+  if (!yamlWidgetPaths.length) {
+    return {};
+  }
+
+  const readResult = await runtime.api.fileRead({
+    files: yamlWidgetPaths
+  });
+
+  return parseWidgetFiles(spaceId, Array.isArray(readResult?.files) ? readResult.files : []);
 }
 
 async function readWidgetFile(spaceId, widgetId, fallback = {}) {
@@ -1548,6 +1592,7 @@ export async function listSpaces() {
     matchedPaths = Array.isArray(listResult?.paths) ? listResult.paths : [];
   } catch (error) {
     if (isNotFoundError(error)) {
+      clearRecentListedSpaceRecords();
       return [];
     }
 
@@ -1558,15 +1603,18 @@ export async function listSpaces() {
   const widgetPaths = matchedPaths.filter((path) => /\/spaces\/[^/]+\/widgets\/[^/]+\.(?:yaml|js)$/u.test(String(path || "")));
 
   if (!manifestPaths.length) {
+    clearRecentListedSpaceRecords();
     return [];
   }
 
+  const yamlWidgetPaths = widgetPaths.filter((path) => String(path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION));
   const widgetCounts = {};
   widgetPaths.forEach((path) => {
     const normalizedPath = String(path || "");
     const widgetSpaceId = normalizedSpaceIdFromWidgetPath(normalizedPath);
+    const widgetId = parseWidgetIdFromPath(normalizedPath);
 
-    if (!widgetSpaceId) {
+    if (!widgetSpaceId || !widgetId) {
       return;
     }
 
@@ -1574,25 +1622,30 @@ export async function listSpaces() {
       widgetCounts[widgetSpaceId] = new Set();
     }
 
-    widgetCounts[widgetSpaceId].add(parseWidgetIdFromPath(normalizedPath));
+    widgetCounts[widgetSpaceId].add(widgetId);
   });
 
   const readResult = await runtime.api.fileRead({
-    files: manifestPaths
+    files: [...manifestPaths, ...yamlWidgetPaths]
   });
-  const widgetReadResult = widgetPaths.length
-    ? await runtime.api.fileRead({
-        files: widgetPaths
-      })
-    : { files: [] };
   const files = Array.isArray(readResult?.files) ? readResult.files : [];
-  const widgetFiles = Array.isArray(widgetReadResult?.files) ? widgetReadResult.files : [];
+  const fileMap = new Map(
+    files.map((file) => [String(file?.path || ""), file])
+  );
   const widgetNamesBySpaceId = {};
+  const widgetRecordsBySpaceId = {};
+  const uncacheableSpaceIds = new Set(
+    widgetPaths
+      .filter((path) => String(path || "").endsWith(".js"))
+      .map((path) => normalizedSpaceIdFromWidgetPath(path))
+      .filter(Boolean)
+  );
 
-  widgetFiles.forEach((file) => {
-    const path = String(file?.path || "");
-    const spaceId = normalizedSpaceIdFromWidgetPath(path);
-    const widgetId = parseWidgetIdFromPath(path);
+  yamlWidgetPaths.forEach((widgetPath) => {
+    const file = fileMap.get(widgetPath);
+    const normalizedPath = String(file?.path || widgetPath);
+    const spaceId = normalizedSpaceIdFromWidgetPath(normalizedPath);
+    const widgetId = parseWidgetIdFromPath(normalizedPath);
 
     if (!spaceId || !widgetId) {
       return;
@@ -1602,26 +1655,39 @@ export async function listSpaces() {
       widgetNamesBySpaceId[spaceId] = {};
     }
 
-    let widgetName = "";
+    try {
+      const widgetRecord = parseWidgetFiles(spaceId, [file])[widgetId];
 
-    if (path.endsWith(SPACE_WIDGET_FILE_EXTENSION)) {
-      try {
-        const parsedWidget = runtime.utils.yaml.parse(String(file?.content || ""));
-        widgetName = String(parsedWidget?.name || parsedWidget?.title || "").trim();
-      } catch {
-        widgetName = "";
+      if (!widgetRecord) {
+        return;
       }
-    }
 
-    widgetNamesBySpaceId[spaceId][widgetId] = widgetName || formatTitleFromId(widgetId);
+      if (!widgetRecordsBySpaceId[spaceId]) {
+        widgetRecordsBySpaceId[spaceId] = {};
+      }
+
+      widgetRecordsBySpaceId[spaceId][widgetId] = widgetRecord;
+      widgetNamesBySpaceId[spaceId][widgetId] = widgetRecord.name || formatTitleFromId(widgetId);
+    } catch {
+      uncacheableSpaceIds.add(spaceId);
+      widgetNamesBySpaceId[spaceId][widgetId] = formatTitleFromId(widgetId);
+    }
   });
 
-  return files
-    .map((file) => {
-      const fallbackId = parseManifestSpaceId(file?.path);
+  const nextListedSpaceRecords = new Map();
+  const listEntries = manifestPaths
+    .map((manifestPath) => {
+      const file = fileMap.get(manifestPath);
+      const fallbackId = parseManifestSpaceId(file?.path || manifestPath);
       const parsedContent = runtime.utils.yaml.parse(String(file?.content || ""));
       const normalizedSpace = normalizeManifest(parsedContent, fallbackId);
       const widgetNameMap = widgetNamesBySpaceId[normalizedSpace.id] || {};
+      const widgetRecords = widgetRecordsBySpaceId[normalizedSpace.id] || {};
+      const discoveredWidgetIds = Object.keys(widgetRecords);
+      const availableWidgetIds = uniqueList([
+        ...normalizedSpace.widgetIds.filter((widgetId) => widgetRecords[widgetId]),
+        ...discoveredWidgetIds
+      ]);
       const thumbnailPath = resolveListedSpaceThumbnailPath(normalizedSpace.id, matchedPaths);
       const orderedWidgetNames = uniqueList([
         ...normalizedSpace.widgetIds
@@ -1631,6 +1697,21 @@ export async function listSpaces() {
           .filter(([widgetId]) => !normalizedSpace.widgetIds.includes(widgetId))
           .map(([, widgetName]) => widgetName)
       ]);
+
+      if (!uncacheableSpaceIds.has(normalizedSpace.id)) {
+        nextListedSpaceRecords.set(normalizedSpace.id, {
+          ...normalizedSpace,
+          minimizedWidgetIds: normalizedSpace.minimizedWidgetIds.filter((widgetId) => availableWidgetIds.includes(widgetId)),
+          widgetIds: availableWidgetIds,
+          widgetPositions: pickWidgetMap(normalizedSpace.widgetPositions, availableWidgetIds),
+          widgetSizes: pickWidgetMap(normalizedSpace.widgetSizes, availableWidgetIds),
+          widgets: Object.fromEntries(
+            availableWidgetIds
+              .filter((widgetId) => widgetRecords[widgetId])
+              .map((widgetId) => [widgetId, widgetRecords[widgetId]])
+          )
+        });
+      }
 
       return formatSpaceListEntry(
         normalizedSpace,
@@ -1652,6 +1733,9 @@ export async function listSpaces() {
         sensitivity: "base"
       });
     });
+
+  setRecentListedSpaceRecords(nextListedSpaceRecords);
+  return listEntries;
 }
 
 function normalizedSpaceIdFromWidgetPath(path) {
@@ -1660,9 +1744,44 @@ function normalizedSpaceIdFromWidgetPath(path) {
 }
 
 export async function readSpace(spaceId) {
-  const manifest = await readManifestFile(spaceId);
-  await migrateLegacyWidgetModules(manifest.id);
-  const widgets = await readWidgetFiles(manifest.id);
+  const cachedSpaceRecord = readRecentListedSpaceRecord(spaceId);
+
+  if (cachedSpaceRecord) {
+    return cachedSpaceRecord;
+  }
+
+  const runtime = ensureSpaceRuntime();
+  const normalizedSpaceId = normalizeOptionalSpaceId(spaceId);
+
+  if (!normalizedSpaceId) {
+    throw new Error("A target spaceId is required to read a space.");
+  }
+
+  let widgetPaths = await listSpaceWidgetPaths(normalizedSpaceId);
+  const migratedLegacyWidgets = await migrateLegacyWidgetModules(normalizedSpaceId, widgetPaths);
+
+  if (migratedLegacyWidgets) {
+    clearRecentListedSpaceRecords();
+    widgetPaths = await listSpaceWidgetPaths(normalizedSpaceId);
+  }
+
+  const yamlWidgetPaths = widgetPaths.filter((path) => String(path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION));
+  const readResult = await runtime.api.fileRead({
+    files: [buildSpaceManifestPath(normalizedSpaceId), ...yamlWidgetPaths]
+  });
+  const files = Array.isArray(readResult?.files) ? readResult.files : [];
+  const manifestFile =
+    files.find((file) => String(file?.path || "") === buildSpaceManifestPath(normalizedSpaceId)) ||
+    files[0] ||
+    null;
+  const manifest = normalizeManifest(
+    runtime.utils.yaml.parse(String(manifestFile?.content || "")),
+    normalizedSpaceId
+  );
+  const widgets = parseWidgetFiles(
+    manifest.id,
+    files.filter((file) => String(file?.path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION))
+  );
   const discoveredWidgetIds = Object.keys(widgets);
   const widgetIds = uniqueList([...manifest.widgetIds.filter((widgetId) => widgets[widgetId]), ...discoveredWidgetIds]);
 
@@ -1733,6 +1852,7 @@ export async function createSpace(options = {}) {
     path: buildSpaceManifestPath(id)
   });
 
+  clearRecentListedSpaceRecords();
   return manifest;
 }
 
@@ -1788,6 +1908,7 @@ export async function installExampleSpace(options = {}) {
     updatedAt: timestamp
   });
 
+  clearRecentListedSpaceRecords();
   return readSpace(id);
 }
 
@@ -1826,6 +1947,7 @@ export async function duplicateSpace(spaceIdOrOptions = {}) {
     assetsPath: buildSpaceAssetsPath(nextId)
   });
 
+  clearRecentListedSpaceRecords();
   return readSpace(nextId);
 }
 
@@ -1845,6 +1967,7 @@ export async function removeSpace(spaceIdOrOptions = {}) {
 
   const spacePath = buildSpaceRootPath(spaceId);
   await runtime.api.fileDelete(spacePath);
+  clearRecentListedSpaceRecords();
 
   return {
     id: spaceId,
@@ -1973,6 +2096,7 @@ export async function upsertWidget(options = {}) {
   ];
 
   await runtime.api.fileWrite({ files });
+  clearRecentListedSpaceRecords();
 
   return buildWidgetWriteResult(nextSpace, widgetId);
 }
@@ -2052,6 +2176,7 @@ export async function upsertWidgets(options = {}) {
       ...files
     ]
   });
+  clearRecentListedSpaceRecords();
 
   return {
     space: nextSpace,
@@ -2119,6 +2244,7 @@ export async function patchWidget(options = {}) {
   ];
 
   await runtime.api.fileWrite({ files });
+  clearRecentListedSpaceRecords();
 
   return buildWidgetWriteResult(nextSpace, widgetId);
 }
@@ -2178,6 +2304,7 @@ export async function removeWidgets(options = {}) {
     paths: widgetIds.map((widgetId) => buildSpaceWidgetFilePath(spaceId, widgetId))
   });
   await Promise.all(widgetIds.map((widgetId) => deleteAppPathIfExists(buildLegacySpaceWidgetFilePath(spaceId, widgetId))));
+  clearRecentListedSpaceRecords();
 
   return {
     space: currentSpace,

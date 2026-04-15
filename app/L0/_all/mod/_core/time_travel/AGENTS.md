@@ -21,9 +21,11 @@ This module owns:
 ## Local Contracts
 
 - the route is `#/time_travel`
+- the same `view.html` is also mounted by the admin Time Travel tab adapter at `/mod/_core/admin/views/time_travel/panel.html`
 - the Time Travel action in the routed header menu is owned here through `_core/onscreen_menu/items` with `data-order="300"`
 - history defaults to the authenticated user's L2 root via `space.api.gitHistoryList({ path: "~", limit, offset, fileFilter })`
 - the route injects its topbar controls into `[id="_core/onscreen_menu/bar_start"]` with `x-inject`; the header keeps a text-labeled Refresh button before the folder repository button there, both controls should rely on the shared shell chrome and stay borderless or background-free unless a state-specific override is necessary, and the repository button label is always the last folder name from the selected Git path, such as the username or group id
+- embedded admin use should rely on the admin shell mirroring that same `[id="_core/onscreen_menu/bar_start"]` host above tab content instead of forking a second topbar-controls contract
 - the routed page header itself keeps the `Time Travel` title on the left and the descriptive subtitle on the right at wider widths, then stacks them naturally on smaller screens
 - the routed page should stay flush with the shared route column and should not add extra horizontal page padding; the inner `.time-travel-shell` width clamp and panel chrome already provide the desktop inset
 - the page background stays plain; do not add decorative gradient or glow backdrops behind the shell, because the panels already carry the module chrome

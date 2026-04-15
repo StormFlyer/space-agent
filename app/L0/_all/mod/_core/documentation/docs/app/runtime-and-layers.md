@@ -10,6 +10,7 @@ This doc covers the frontend boot flow, the browser runtime namespace, and the l
 - `app/L0/_all/mod/_core/login_hooks/AGENTS.md`
 - `app/L0/_all/mod/_core/router/AGENTS.md`
 - `app/L0/_all/mod/_core/time_travel/AGENTS.md`
+- `app/L0/_all/mod/_core/user_crypto/AGENTS.md`
 - `app/L0/_all/mod/_core/framework/js/runtime.js`
 - `server/pages/*.html`
 
@@ -47,7 +48,7 @@ Logical paths stay stable even when the writable roots move:
 - relocated writable roots: `CUSTOMWARE_PATH/L1/...` and `CUSTOMWARE_PATH/L2/...`
 - logical API paths still look like `L1/...`, `L2/...`, `/app/L1/...`, `/app/L2/...`, or `~/...`
 - when `CUSTOMWARE_GIT_HISTORY` is enabled, each writable `L1/<group>/` and `L2/<user>/` root may have its own local Git history repo managed by the server
-- L2 history intentionally ignores and preserves `meta/password.json` and `meta/logins.json` so rollback does not alter current login or password state
+- L2 history intentionally ignores and preserves `meta/password.json`, `meta/logins.json`, and `meta/user_crypto.json` so rollback does not alter current login, password, or wrapped browser-key state
 - the `#/time_travel` page defaults to the current user's `~` history and can switch to other write-accessible `L1` or `L2` local-history roots through a server-filtered repository picker
 - rollback preserves newer commits in backend-owned history refs when possible so the Time Travel page can still show forward-travel options after moving back
 
@@ -58,8 +59,9 @@ Permission summary:
 - users write `L1/<group>/...` only if they manage that group
 - `_admin` members may write any `L1` and `L2` path
 - first-party frontend modules may persist small client-owned lifecycle state under the current user's `~/meta/` folder when that state is not backend auth material; `_core/login_hooks` uses `~/meta/login_hooks.json` to remember that first-login hooks already ran, and `_core/spaces` currently consumes that seam to copy or reuse the module-owned `Big Bang` onboarding space before the root app shell would default to dashboard
+- first-party frontend modules may also rely on backend-assisted user-owned key records under `~/meta/` when the browser must keep the actual decryptable key material session-scoped; `_core/user_crypto` uses `~/meta/user_crypto.json` plus a backend-only server share to restore a per-login browser key without keeping that plaintext key in app files
 - first-party frontend modules may edit browser-owned user metadata files when the file itself is part of the layered app model; `_core/user` writes `~/user.yaml` directly for `full_name`, while password rotation still goes through the backend-owned `/api/password_change` endpoint instead of writing `~/meta/password.json`
-- first-party frontend modules may also edit small user-authored prompt or settings files under `~/conf/` when that data is intentionally browser-owned; `_core/agent` edits `~/conf/personality.system.include.md` as raw prompt-include text for the current user
+- first-party frontend modules may also edit small user-authored prompt or settings files under `~/conf/` when that data is intentionally browser-owned; `_core/agent` edits `~/conf/personality.system.include.md` as raw prompt-include text for the current user, while `_core/onscreen_agent` and `_core/admin/views/agent` store their `api_key` fields as `userCrypto:`-prefixed ciphertext when the current browser session has unlocked `space.utils.userCrypto`, except in `SINGLE_USER_APP=true` where `space.utils.userCrypto` intentionally bypasses encryption and leaves those values plaintext
 - `_core/file_explorer` is the first-party routed Files page and reusable component for normal authenticated app-file reads and writes; the server remains authoritative for permissions
 
 ## `globalThis.space`
@@ -73,6 +75,7 @@ Important namespaces:
 - `space.config`: frontend-exposed runtime params
 - `space.fw.createStore`: Alpine store helper
 - `space.utils.markdown.render(...)` and `parseDocument(...)`
+- `space.utils.userCrypto`, which exposes session-scoped `encryptText(...)`, `decryptText(...)`, `encryptBytes(...)`, `decryptBytes(...)`, `status()`, and password-rewrap helpers for browser-owned encrypted user settings; in `SINGLE_USER_APP=true` it short-circuits to plaintext or raw-byte pass-through and skips login-bound crypto bootstrap
 - `space.utils.yaml.parse(...)` and `stringify(...)`, backed by the shared project-owned lightweight YAML utility in `_core/framework/js/yaml-lite.js`, which server modules also import directly
 - `space.proxy`, `space.download`, `space.fetchExternal(...)`
 - `space.router`: router helper surface on routed app pages
@@ -94,8 +97,10 @@ Frontend code should derive writable roots from `space.api.userSelfInfo()`.
 That helper returns:
 
 ```txt
-{ username, fullName, groups, managedGroups }
+{ username, fullName, groups, managedGroups, sessionId, userCryptoKeyId, userCryptoState }
 ```
+
+That runtime identity shape is camelCase for JavaScript APIs, but the persisted layered user file still uses snake_case: edit `~/user.yaml` `full_name`, not `fullName`.
 
 Use it to decide whether a write belongs in:
 

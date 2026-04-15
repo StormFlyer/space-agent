@@ -36,8 +36,14 @@ const MODULE_PATH_PATTERN = /\/mod\/([^/]+)\/([^/]+)\/(.+)$/u;
  */
 
 /**
+ * @typedef {Object} LoadExtensionsBatchResult
+ * @property {ExtensionPath[]} extensions
+ * @property {string[]} patterns
+ */
+
+/**
  * @typedef {Object} LoadExtensionsBatchResponse
- * @property {Record<string, ExtensionPath[]>} [results]
+ * @property {LoadExtensionsBatchResult[]} [results]
  */
 
 /**
@@ -48,7 +54,7 @@ const MODULE_PATH_PATTERN = /\/mod\/([^/]+)\/([^/]+)\/(.+)$/u;
 
 /**
  * @typedef {Object} QueuedExtensionLookup
- * @property {string} key
+ * @property {string} lookupKey
  * @property {string[]} patterns
  * @property {(paths: ExtensionPath[]) => void} resolve
  * @property {(error: any) => void} reject
@@ -354,15 +360,18 @@ function createExtensionPatterns(extensionPoint, filters, scope) {
 
 function createExtensionLookupKey(patterns) {
   const maxLayer = getConfiguredModuleMaxLayer();
+  const normalizedPatterns = patterns
+    .map((pattern) => normalizeExtensionSegment(pattern))
+    .filter(Boolean);
 
-  return JSON.stringify(
-    {
-      maxLayer,
-      patterns: patterns
-        .map((pattern) => normalizeExtensionSegment(pattern))
-        .filter(Boolean)
-    }
-  );
+  if (normalizedPatterns.length === 0) {
+    return "";
+  }
+
+  return [
+    "maxLayer:" + (maxLayer === null ? "" : String(maxLayer)),
+    ...normalizedPatterns
+  ].join("\n");
 }
 
 function createExtensionCacheKey(extensionPoint, scope) {
@@ -419,21 +428,16 @@ async function flushQueuedExtensionLookups() {
     /** @type {LoadExtensionsBatchResponse | null} */
     const response = await api.callJsonApi(`/api/extensions_load`, {
       ...(maxLayer === null ? {} : { maxLayer }),
-      requests: queuedRequests.map(({ key, patterns }) => ({
-        key,
-        patterns
-      }))
+      requests: queuedRequests.map(({ patterns }) => ({ patterns }))
     });
 
-    const results =
-      response && typeof response === "object" && response.results &&
-      typeof response.results === "object"
-        ? response.results
-        : Object.create(null);
+    const results = Array.isArray(response?.results)
+      ? response.results
+      : [];
 
-    for (const request of queuedRequests) {
-      const paths = Array.isArray(results[request.key])
-        ? results[request.key].filter((path) => typeof path === "string")
+    for (const [index, request] of queuedRequests.entries()) {
+      const paths = Array.isArray(results[index]?.extensions)
+        ? results[index].extensions.filter((path) => typeof path === "string")
         : [];
 
       request.resolve(paths);
@@ -444,37 +448,22 @@ async function flushQueuedExtensionLookups() {
     }
   } finally {
     for (const request of queuedRequests) {
-      pendingExtensionLookups.delete(request.key);
+      pendingExtensionLookups.delete(request.lookupKey);
     }
   }
 }
 
-function normalizeExtensionLookupResponse(results, key) {
-  return Array.isArray(results?.[key])
-    ? results[key].filter((path) => typeof path === "string")
-    : [];
-}
-
-async function requestExtensionLookupPaths(key, patterns) {
+async function requestExtensionLookupPaths(patterns) {
   const maxLayer = getConfiguredModuleMaxLayer();
-  /** @type {LoadExtensionsBatchResponse | null} */
+  /** @type {LoadExtensionsResponse | null} */
   const response = await api.callJsonApi(`/api/extensions_load`, {
     ...(maxLayer === null ? {} : { maxLayer }),
-    requests: [
-      {
-        key,
-        patterns
-      }
-    ]
+    patterns
   });
 
-  const results =
-    response && typeof response === "object" && response.results &&
-    typeof response.results === "object"
-      ? response.results
-      : Object.create(null);
-
-  return normalizeExtensionLookupResponse(results, key);
+  return Array.isArray(response?.extensions)
+    ? response.extensions.filter((path) => typeof path === "string")
+    : [];
 }
 
 function runScheduledExtensionLookupFlush() {
@@ -549,7 +538,7 @@ function loadExtensionPaths(extensionPoint, filters, scope) {
   }
 
   if (scope !== HTML_EXTENSION_SCOPE) {
-    const lookupPromise = requestExtensionLookupPaths(lookupKey, patterns)
+    const lookupPromise = requestExtensionLookupPaths(patterns)
       .finally(() => {
         pendingExtensionLookups.delete(lookupKey);
       });
@@ -559,7 +548,7 @@ function loadExtensionPaths(extensionPoint, filters, scope) {
 
   const lookupPromise = new Promise((resolve, reject) => {
     queuedExtensionLookups.set(lookupKey, {
-      key: lookupKey,
+      lookupKey,
       patterns,
       reject,
       resolve

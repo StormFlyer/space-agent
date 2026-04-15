@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { resolveInheritedModuleProjectPath } from "../server/lib/customware/module_inheritance.js";
 import {
-  listResolvedExtensionRequestPathGroups,
+  listResolvedExtensionRequests,
   listResolvedExtensionRequestPaths
 } from "../server/lib/customware/extension_overrides.js";
 import { listInstalledModules, readModuleInfo } from "../server/lib/customware/module_manage.js";
@@ -192,22 +192,30 @@ test("state-backed extension discovery respects layered overrides and caller vis
   });
   assert.deepEqual(bobExtensions, ["/mod/acme/demo/ext/panels/default.yaml"]);
 
-  const grouped = listResolvedExtensionRequestPathGroups({
+  const grouped = listResolvedExtensionRequests({
     maxLayer: 2,
     requests: [
-      { key: "panels", patterns: ["panels/*.yaml"] },
-      { key: "teamOnly", patterns: ["panels/team.yaml"] }
+      { patterns: ["panels/*.yaml"] },
+      { patterns: ["panels/team.yaml"] }
     ],
     runtimeParams,
     stateSystem,
     username: "alice"
   });
-  assert.deepEqual(grouped.panels, [
-    "/mod/acme/demo/ext/panels/default.yaml",
-    "/mod/acme/demo/ext/panels/team.yaml",
-    "/mod/acme/demo/ext/panels/user.yaml"
+  assert.deepEqual(grouped, [
+    {
+      extensions: [
+        "/mod/acme/demo/ext/panels/default.yaml",
+        "/mod/acme/demo/ext/panels/team.yaml",
+        "/mod/acme/demo/ext/panels/user.yaml"
+      ],
+      patterns: ["panels/*.yaml"]
+    },
+    {
+      extensions: ["/mod/acme/demo/ext/panels/team.yaml"],
+      patterns: ["panels/team.yaml"]
+    }
   ]);
-  assert.deepEqual(grouped.teamOnly, ["/mod/acme/demo/ext/panels/team.yaml"]);
 });
 
 test("state-backed module management lists self and admin cross-user visibility correctly", async () => {
