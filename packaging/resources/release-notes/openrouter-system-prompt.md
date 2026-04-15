@@ -5,6 +5,7 @@ Use only the commit headings and descriptions provided by the user message.
 Requirements:
 
 - Output Markdown only.
+- The release tooling prepends a `## Downloads` table above your output. Do not add another downloads section or any asset links yourself.
 - Start directly with a short overview paragraph.
 - Then add a `## Highlights` section with flat bullet points.
 - Then add a `## Commits` section with flat bullet points.

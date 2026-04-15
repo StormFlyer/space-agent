@@ -142,6 +142,10 @@ function setDesktopUpdateState(nextState = {}) {
   }
 }
 
+function prepareDesktopForQuit() {
+  isQuitting = true;
+}
+
 function getDesktopRuntimeInfo() {
   const canCheckForUpdates = shouldEnableDesktopAutoUpdate() && Boolean(loadDesktopAutoUpdater());
 
@@ -472,6 +476,14 @@ function installDesktopUpdate() {
 
   logDesktopUpdateEvent("Installing downloaded desktop update.");
   setDesktopUpdateStatus("Restarting to install update...");
+  setDesktopUpdateState({
+    state: "installing",
+    message: "",
+    progress: null
+  });
+  // Electron emits before-quit after updater-triggered window close events on macOS,
+  // so the host must mark updater restarts as real quits before calling quitAndInstall().
+  prepareDesktopForQuit();
   setImmediate(() => {
     autoUpdater.quitAndInstall();
   });
@@ -491,6 +503,7 @@ function configureDesktopAutoUpdate() {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.logger = console;
 
   autoUpdater.on("checking-for-update", () => {
@@ -677,7 +690,7 @@ ipcMain.handle("space-desktop:download-update", () => downloadDesktopUpdate());
 ipcMain.handle("space-desktop:install-update", () => installDesktopUpdate());
 
 app.on("before-quit", () => {
-  isQuitting = true;
+  prepareDesktopForQuit();
   stopServerRuntime();
 });
 

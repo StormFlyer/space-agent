@@ -69,17 +69,14 @@
     "win": {
       "icon": "packaging/platforms/windows/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
     "linux": {
       "icon": "packaging/platforms/linux/icons",
       "category": "Development",
       "target": [
-        "AppImage",
-        "deb",
-        "tar.gz"
+        "AppImage"
       ]
     }
   },

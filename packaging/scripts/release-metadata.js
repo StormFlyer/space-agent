@@ -94,6 +94,19 @@ function serializeUpdateMetadata(metadata) {
     lines.push(`version: ${quoteYamlValue(metadata.version)}`);
   }
 
+  Object.entries(metadata).forEach(([key, value]) => {
+    if (key === "version" || key === "files" || key === "path" || key === "sha512") {
+      return;
+    }
+    if (value === undefined || value === null || (typeof value === "object" && !Array.isArray(value))) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      return;
+    }
+    lines.push(`${key}: ${quoteYamlValue(value)}`);
+  });
+
   lines.push("files:");
   files.forEach((file) => {
     lines.push(`  - url: ${quoteYamlValue(file.url)}`);
@@ -111,10 +124,6 @@ function serializeUpdateMetadata(metadata) {
 
   if (sha512Value) {
     lines.push(`sha512: ${quoteYamlValue(sha512Value)}`);
-  }
-
-  if (metadata.releaseDate) {
-    lines.push(`releaseDate: ${quoteYamlValue(metadata.releaseDate)}`);
   }
 
   return `${lines.join("\n")}\n`;

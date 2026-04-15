@@ -821,12 +821,11 @@
           buttonLabel = Number.isFinite(progressValue)
             ? "Downloading " + Math.round(progressValue * 100) + "%"
             : "Downloading Update...";
+          message = "";
           showButton = true;
         } else if (statusKey === "downloaded") {
           buttonLabel = "Restart to Update";
-          message = version
-            ? "Update " + version + " is ready to install. Restart the app to finish installing."
-            : "Update ready to install. Restart the app to finish installing.";
+          message = "";
           showButton = true;
         } else if (statusKey === "up-to-date") {
           message = "";

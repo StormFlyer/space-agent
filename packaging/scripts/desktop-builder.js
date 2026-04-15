@@ -32,7 +32,7 @@ const PLATFORM_SPECS = {
     label: "Windows",
     builderPlatform: Platform.WINDOWS,
     configKey: "win",
-    defaultTargets: ["nsis", "portable"],
+    defaultTargets: ["nsis"],
     entryScript: "windows-package.js",
     preferredHost: "win32"
   },
@@ -41,7 +41,7 @@ const PLATFORM_SPECS = {
     label: "Linux",
     builderPlatform: Platform.LINUX,
     configKey: "linux",
-    defaultTargets: ["AppImage", "deb", "tar.gz"],
+    defaultTargets: ["AppImage"],
     entryScript: "linux-package.js",
     preferredHost: "linux"
   }

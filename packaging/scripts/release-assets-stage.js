@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { listFiles, readUpdateMetadata, readYamlScalar } = require("./release-metadata");
+const { listFiles, readUpdateMetadata, readYamlScalar, serializeUpdateMetadata } = require("./release-metadata");
 
 const FILTERS_PATH = path.join(__dirname, "..", "release-asset-filters.yaml");
 const METADATA_SPECS = [
@@ -15,6 +15,11 @@ const PUBLIC_EXTENSION_MAP = {
   AppImage: "AppImage",
   dmg: "dmg",
   exe: "exe"
+};
+const UPDATER_PRIMARY_EXTENSION_MAP = {
+  windows: "exe",
+  macos: "zip",
+  linux: "AppImage"
 };
 
 function parseArgs(argv) {
@@ -45,10 +50,7 @@ function toPosixPath(value) {
 }
 
 function escapeRegExp(value) {
-  const specials = new Set(["\\", ".", "+", "*", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]"]);
-  return Array.from(String(value || ""))
-    .map((character) => (specials.has(character) ? "\\" + character : character))
-    .join("");
+  return String(value || "").replace(/[\\.^$+*?()[\]{}|]/gu, "\\$&");
 }
 
 function globPatternToRegExp(pattern) {
@@ -61,7 +63,7 @@ function readReleaseUploadPatterns(filePath) {
   return fs
     .readFileSync(filePath, "utf8")
     .split(/\r?\n/u)
-    .map((line) => line.match(/^\s*pattern:\s*(.+)\s*$/u))
+    .map((line) => line.match(/^\s*pattern:\s*(.+?)\s*$/u))
     .filter(Boolean)
     .map((match) => readYamlScalar(match[1]));
 }
@@ -182,6 +184,18 @@ function stageFile(context, sourcePath, targetName) {
   return outputPath;
 }
 
+function stageGeneratedFile(context, targetName, contents, sourcePath = "") {
+  const outputPath = path.join(context.outputDir, targetName);
+  fs.writeFileSync(outputPath, contents, "utf8");
+  context.staged.set(targetName, {
+    sourcePath,
+    outputPath,
+    targetName
+  });
+  context.staleAssetNames.add(targetName);
+  return outputPath;
+}
+
 function addSourceStaleBasename(context, artifactDir, basename) {
   context.staleAssetNames.add(basename);
   context.staleAssetNames.add(artifactDir + "-" + basename);
@@ -191,6 +205,30 @@ function addSourceStaleNames(context, record) {
   addSourceStaleBasename(context, record.artifactDir, record.basename);
 }
 
+function buildCanonicalAssetName(releaseVersion, platform, arch, baseExtension) {
+  if (platform === "macos" && baseExtension === "zip") {
+    return "Space-Agent-" + releaseVersion + "-" + platform + "-" + arch + "-update.zip";
+  }
+
+  const publicExtension = PUBLIC_EXTENSION_MAP[baseExtension];
+  if (!publicExtension) {
+    throw new Error(
+      "No canonical release asset mapping is configured for " + platform + "/" + arch + "/" + baseExtension + "."
+    );
+  }
+
+  return "Space-Agent-" + releaseVersion + "-" + platform + "-" + arch + "." + publicExtension;
+}
+
+function createCanonicalMetadataArtifact(record, releaseVersion, metadataEntry) {
+  const targetName = buildCanonicalAssetName(releaseVersion, record.platform, record.arch, record.baseExtension);
+  return {
+    ...metadataEntry,
+    url: targetName,
+    size: String(record.size)
+  };
+}
+
 function stagePublicReleaseAssets(releaseVersion, context, artifactIndex) {
   const patterns = readReleaseUploadPatterns(FILTERS_PATH).map((pattern) => ({
     pattern,
@@ -198,21 +236,15 @@ function stagePublicReleaseAssets(releaseVersion, context, artifactIndex) {
   }));
 
   artifactIndex.forEach((record) => {
-    const relativeToCwd = toPosixPath(path.relative(process.cwd(), record.path));
-    if (!patterns.some((entry) => entry.regex.test(relativeToCwd))) {
+    const filterPath = "release-assets/" + record.relativePath;
+    if (!patterns.some((entry) => entry.regex.test(filterPath))) {
       return;
     }
 
-    const publicExtension = PUBLIC_EXTENSION_MAP[record.baseExtension];
-    if (!publicExtension) {
-      throw new Error("No public release asset mapping is configured for " + record.relativePath + ".");
-    }
-
-    const targetName =
-      "Space-Agent-" + releaseVersion + "-" + record.platform + "-" + record.arch + "." + publicExtension;
+    const targetName = buildCanonicalAssetName(releaseVersion, record.platform, record.arch, record.baseExtension);
     stageFile(context, record.path, targetName);
     addSourceStaleNames(context, record);
-    console.log(relativeToCwd + " -> " + targetName);
+    console.log(filterPath + " -> " + targetName);
   });
 }
 
@@ -269,7 +301,17 @@ function matchMetadataAsset(platformFiles, metadataFileName, metadataEntry) {
   return candidates[0];
 }
 
-function stageUpdaterMetadataAssets(rootDir, context, artifactIndex) {
+function markBlockmapAsStale(context, record, originalUrl) {
+  const blockmapPath = record.path + ".blockmap";
+  if (!fs.existsSync(blockmapPath)) {
+    return;
+  }
+
+  addSourceStaleBasename(context, record.artifactDir, path.basename(blockmapPath));
+  context.staleAssetNames.add(String(originalUrl || "") + ".blockmap");
+}
+
+function stageUpdaterMetadataAssets(rootDir, context, artifactIndex, releaseVersion) {
   METADATA_SPECS.forEach((spec) => {
     const metadataPath = path.join(rootDir, spec.fileName);
     if (!fs.existsSync(metadataPath)) {
@@ -290,26 +332,41 @@ function stageUpdaterMetadataAssets(rootDir, context, artifactIndex) {
       return true;
     });
 
-    stageFile(context, metadataPath, spec.fileName);
-    context.staleAssetNames.add(spec.fileName);
-    spec.legacyNames.forEach((legacyName) => {
-      context.staleAssetNames.add(legacyName);
-    });
+    const desiredBaseExtension = UPDATER_PRIMARY_EXTENSION_MAP[spec.platform];
+    const rewrittenFiles = [];
 
     metadata.files.forEach((metadataEntry) => {
       const matched = matchMetadataAsset(platformFiles, spec.fileName, metadataEntry);
-      stageFile(context, matched.path, metadataEntry.url);
       addSourceStaleNames(context, matched);
-      context.staleAssetNames.add(metadataEntry.url);
-      console.log(toPosixPath(path.relative(process.cwd(), matched.path)) + " -> " + metadataEntry.url);
-
-      const blockmapPath = matched.path + ".blockmap";
-      if (fs.existsSync(blockmapPath)) {
-        const blockmapName = metadataEntry.url + ".blockmap";
-        stageFile(context, blockmapPath, blockmapName);
-        addSourceStaleBasename(context, matched.artifactDir, path.basename(blockmapPath));
-        context.staleAssetNames.add(blockmapName);
+      if (metadataEntry.url) {
+        context.staleAssetNames.add(metadataEntry.url);
       }
+      markBlockmapAsStale(context, matched, metadataEntry.url);
+
+      if (matched.baseExtension !== desiredBaseExtension) {
+        return;
+      }
+
+      const rewrittenEntry = createCanonicalMetadataArtifact(matched, releaseVersion, metadataEntry);
+      stageFile(context, matched.path, rewrittenEntry.url);
+      rewrittenFiles.push(rewrittenEntry);
+      console.log(toPosixPath(path.relative(process.cwd(), matched.path)) + " -> " + rewrittenEntry.url);
+    });
+
+    if (!rewrittenFiles.length) {
+      throw new Error("No updater payloads were selected for " + spec.fileName + ".");
+    }
+
+    const rewrittenMetadata = {
+      ...metadata,
+      files: rewrittenFiles,
+      path: rewrittenFiles[0].url,
+      sha512: rewrittenFiles[0].sha512 || ""
+    };
+
+    stageGeneratedFile(context, spec.fileName, serializeUpdateMetadata(rewrittenMetadata), metadataPath);
+    spec.legacyNames.forEach((legacyName) => {
+      context.staleAssetNames.add(legacyName);
     });
   });
 }
@@ -339,7 +396,7 @@ function main() {
   const context = createStageContext(parsed.outputDir);
 
   stagePublicReleaseAssets(parsed.releaseVersion, context, artifactIndex);
-  stageUpdaterMetadataAssets(parsed.assetsDir, context, artifactIndex);
+  stageUpdaterMetadataAssets(parsed.assetsDir, context, artifactIndex, parsed.releaseVersion);
 
   const manifestPath = writeManifest(context);
   console.log("Wrote release upload manifest to " + manifestPath + ".");

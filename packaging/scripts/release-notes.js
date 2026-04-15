@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
+const { parseReleaseVersion } = require("./release-version");
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 const SYSTEM_PROMPT_PATH = path.join(
@@ -12,6 +13,8 @@ const SYSTEM_PROMPT_PATH = path.join(
   "release-notes",
   "openrouter-system-prompt.md"
 );
+const PACKAGE_JSON_PATH = path.join(__dirname, "..", "..", "package.json");
+const DEFAULT_REPOSITORY_SLUG = "agent0ai/space-agent";
 
 function writeOutput(name, value) {
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -41,6 +44,78 @@ function gitSucceeds(args) {
 
 function loadText(filePath) {
   return fs.readFileSync(filePath, "utf8");
+}
+
+function resolveRepositorySlug() {
+  const envRepository = String(process.env.GITHUB_REPOSITORY || "").trim();
+  if (/^[^/\s]+\/[^/\s]+$/u.test(envRepository)) {
+    return envRepository;
+  }
+
+  try {
+    const packageJson = JSON.parse(loadText(PACKAGE_JSON_PATH));
+    const repositoryUrl = String(packageJson?.repository?.url || "").trim();
+    const match = repositoryUrl.match(/github\.com[/:]([^/\s]+\/[^/\s]+?)(?:\.git)?$/u);
+    if (match) {
+      return match[1];
+    }
+  } catch (_error) {
+    // Fall through to the default repository slug.
+  }
+
+  return DEFAULT_REPOSITORY_SLUG;
+}
+
+function buildReleaseAssetUrl(repositorySlug, releaseTag, fileName) {
+  return `https://github.com/${repositorySlug}/releases/download/${releaseTag}/${fileName}`;
+}
+
+function buildDownloadsTable(currentTag) {
+  const parsedReleaseVersion = parseReleaseVersion(currentTag);
+  if (!parsedReleaseVersion) {
+    throw new Error(`Could not derive release asset links from tag ${currentTag}.`);
+  }
+
+  const repositorySlug = resolveRepositorySlug();
+  const { releaseTag, releaseVersion } = parsedReleaseVersion;
+  const rows = [
+    {
+      architecture: "x86",
+      macos: { text: "Mac Intel", fileName: `Space-Agent-${releaseVersion}-macos-x64.dmg` },
+      linux: { text: "Linux x86", fileName: `Space-Agent-${releaseVersion}-linux-x64.AppImage` },
+      windows: { text: "Win x86", fileName: `Space-Agent-${releaseVersion}-windows-x64.exe` }
+    },
+    {
+      architecture: "ARM",
+      macos: { text: "Mac ARM", fileName: `Space-Agent-${releaseVersion}-macos-arm64.dmg` },
+      linux: { text: "Linux ARM", fileName: `Space-Agent-${releaseVersion}-linux-arm64.AppImage` },
+      windows: { text: "Win ARM", fileName: `Space-Agent-${releaseVersion}-windows-arm64.exe` }
+    }
+  ];
+
+  const lines = [
+    "## Downloads",
+    "",
+    "| Architecture | MacOS | Linux | Windows |",
+    "| --- | --- | --- | --- |"
+  ];
+
+  rows.forEach((row) => {
+    lines.push(
+      `| ${row.architecture} | [${row.macos.text}](${buildReleaseAssetUrl(repositorySlug, releaseTag, row.macos.fileName)}) | [${row.linux.text}](${buildReleaseAssetUrl(repositorySlug, releaseTag, row.linux.fileName)}) | [${row.windows.text}](${buildReleaseAssetUrl(repositorySlug, releaseTag, row.windows.fileName)}) |`
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function composeReleaseBody(currentTag, notesBody) {
+  const sections = [buildDownloadsTable(currentTag)];
+  const sanitizedNotesBody = sanitizeReleaseBody(notesBody);
+  if (sanitizedNotesBody) {
+    sections.push(sanitizedNotesBody);
+  }
+  return sections.join("\n\n").trim();
 }
 
 function tagExists(tag) {
@@ -320,6 +395,7 @@ async function main() {
   }
 
   body = sanitizeReleaseBody(body);
+  body = composeReleaseBody(options.currentTag, body);
 
   writeOutput("release_body", body);
   writeOutput("release_commit_count", String(commits.length));
