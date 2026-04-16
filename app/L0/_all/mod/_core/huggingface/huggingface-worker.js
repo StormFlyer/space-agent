@@ -447,6 +447,66 @@ async function ensureRuntimeModule() {
   return runtimeModulePromise;
 }
 
+async function resolveChatProcessor(runtimeModule, modelId, loadOptions = {}) {
+  const pipelineProcessor = generator?.processor || null;
+
+  if (pipelineProcessor) {
+    postTrace("processor-load:pipeline", {
+      hasApplyChatTemplate: typeof pipelineProcessor.apply_chat_template === "function",
+      hasTokenizer: Boolean(pipelineProcessor?.tokenizer),
+      modelId,
+      processorType: pipelineProcessor?.constructor?.name || ""
+    });
+    return {
+      processor: pipelineProcessor,
+      source: "pipeline"
+    };
+  }
+
+  const { AutoProcessor } = runtimeModule || {};
+  if (typeof AutoProcessor?.from_pretrained !== "function") {
+    postTrace("processor-load:unavailable", {
+      modelId
+    });
+    return {
+      processor: null,
+      source: ""
+    };
+  }
+
+  postTrace("processor-load:start", {
+    modelId,
+    source: "auto-processor"
+  });
+
+  try {
+    const loadedProcessor = await AutoProcessor.from_pretrained(modelId, loadOptions);
+    postTrace("processor-load:done", {
+      hasApplyChatTemplate: typeof loadedProcessor?.apply_chat_template === "function",
+      hasTokenizer: Boolean(loadedProcessor?.tokenizer),
+      modelId,
+      processorType: loadedProcessor?.constructor?.name || "",
+      source: "auto-processor"
+    });
+    return {
+      processor: loadedProcessor || null,
+      source: loadedProcessor ? "auto-processor" : ""
+    };
+  } catch (error) {
+    const serializedError = serializeError(error);
+    postTrace("processor-load:failed", {
+      errorMessage: serializedError.message,
+      errorName: serializedError.name,
+      modelId,
+      source: "auto-processor"
+    });
+    return {
+      processor: null,
+      source: ""
+    };
+  }
+}
+
 async function preparePrompt(messages = []) {
   if (!tokenizer) {
     throw new Error("Load a model before sending a chat message.");
@@ -461,20 +521,29 @@ async function preparePrompt(messages = []) {
       });
 
       if (typeof promptText === "string" && promptText.length > 0) {
-        const inputs = processor.apply_chat_template(messages, {
-          add_generation_prompt: true,
-          enable_thinking: false,
+        // Tokenize the rendered processor template directly because Gemma processor tokenization can throw.
+        const promptInputs = await tokenizer(promptText, {
+          add_special_tokens: false,
           return_dict: true,
-          tokenize: true
+          return_tensor: false
+        });
+
+        postTrace("prompt:processor-template", {
+          messageCount: Array.isArray(messages) ? messages.length : 0,
+          promptLength: promptText.length
         });
 
         return {
           addSpecialTokens: false,
           promptText,
-          promptTokenCount: extractFirstSequenceLength(inputs?.input_ids)
+          promptTokenCount: extractFirstSequenceLength(promptInputs?.input_ids)
         };
       }
-    } catch {
+    } catch (error) {
+      postTrace("prompt:processor-template-failed", {
+        errorMessage: serializeError(error).message,
+        errorName: serializeError(error).name
+      });
       // Fall back to tokenizer formatting or handwritten prompt formatting when the processor template is unavailable.
     }
   }
@@ -489,7 +558,13 @@ async function preparePrompt(messages = []) {
       if (typeof promptText === "string" && promptText.length > 0) {
         const inputs = await tokenizer(promptText, {
           add_special_tokens: false,
-          return_dict: true
+          return_dict: true,
+          return_tensor: false
+        });
+
+        postTrace("prompt:tokenizer-template", {
+          messageCount: Array.isArray(messages) ? messages.length : 0,
+          promptLength: promptText.length
         });
 
         return {
@@ -498,16 +573,25 @@ async function preparePrompt(messages = []) {
           promptTokenCount: extractFirstSequenceLength(inputs?.input_ids)
         };
       }
-    } catch {
+    } catch (error) {
+      postTrace("prompt:tokenizer-template-failed", {
+        errorMessage: serializeError(error).message,
+        errorName: serializeError(error).name
+      });
       // Fall back to plain prompt formatting when the tokenizer lacks a usable chat template.
     }
   }
 
   const promptText = buildHuggingFaceFallbackPrompt(messages);
   const addSpecialTokens = (tokenizer.add_bos_token || tokenizer.add_eos_token) ?? false;
+  postTrace("prompt:fallback-template", {
+    messageCount: Array.isArray(messages) ? messages.length : 0,
+    promptLength: promptText.length
+  });
   const inputs = await tokenizer(promptText, {
     add_special_tokens: addSpecialTokens,
-    return_dict: true
+    return_dict: true,
+    return_tensor: false
   });
 
   return {
@@ -591,12 +675,21 @@ async function handleLoadModel(payload = {}) {
       progress_callback
     });
     flushLoadProgressTracker(currentLoadProgressTracker, requestId, modelId);
-    processor = generator?.processor || null;
-    tokenizer = processor?.tokenizer || generator?.tokenizer || null;
+    const resolvedProcessor = await resolveChatProcessor(runtimeModule, modelId, {
+      device: "webgpu",
+      dtype,
+      progress_callback
+    });
+    processor = resolvedProcessor.processor;
+    tokenizer = generator?.tokenizer || processor?.tokenizer || null;
     postTrace("pipeline-load:done", {
       dtype,
       modelId,
-      requestId
+      processorSource: resolvedProcessor.source,
+      processorType: processor?.constructor?.name || "",
+      requestId,
+      resolvedProcessor: Boolean(processor),
+      tokenizerHasChatTemplate: typeof tokenizer?.apply_chat_template === "function"
     });
 
     if (currentLoadRequestId !== requestId) {
@@ -825,7 +918,8 @@ async function handleRunChat(payload = {}) {
     const endToEndLatencySeconds = Math.max(performance.now() - startedAt, 0) / 1000;
     const decodeLatencySeconds = Math.max(endToEndLatencySeconds - ((timeToFirstTokenMs || 0) / 1000), 0);
     const completionTokenIds = await tokenizer(decodedText || streamedText || "", {
-      return_dict: true
+      return_dict: true,
+      return_tensor: false
     });
     const completionTokens = extractFirstSequenceLength(completionTokenIds?.input_ids);
     const tokensPerSecond = completionTokens > 0 && decodeLatencySeconds > 0

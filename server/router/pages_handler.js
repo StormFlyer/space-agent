@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { isSingleUserApp } from "../lib/utils/runtime_params.js";
 import { runTrackedMutation } from "../runtime/request_mutations.js";
-import { sendFile, sendJson, sendNotFound, sendRedirect } from "./responses.js";
+import { createNoStoreHeaders, sendFile, sendJson, sendNotFound, sendRedirect } from "./responses.js";
 
 const LEGACY_ROUTE_REDIRECTS = new Map([
   ["/index.html", "/"],
@@ -146,11 +146,11 @@ async function sendPageHtml(res, filePath, options = {}) {
     options.runtimeParams
   );
 
-  res.writeHead(200, {
+  res.writeHead(200, createNoStoreHeaders({
     ...(options.headers || {}),
     "Content-Length": Buffer.byteLength(body),
     "Content-Type": "text/html; charset=utf-8"
-  });
+  }));
   res.end(body);
 }
 
@@ -274,7 +274,7 @@ async function handlePageRequest(res, requestUrl, options = {}) {
     }
 
     sendFile(res, resourceRequest.filePath, {
-      headers: createSessionCleanupHeaders(requestContext, auth)
+      headers: createNoStoreHeaders(createSessionCleanupHeaders(requestContext, auth))
     });
     return;
   }

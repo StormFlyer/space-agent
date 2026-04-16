@@ -23,6 +23,15 @@ const MIME_TYPES = {
   ".xhtml": "application/xhtml+xml; charset=utf-8"
 };
 
+function createNoStoreHeaders(headers = {}) {
+  return {
+    ...headers,
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
+    Expires: "0",
+    Pragma: "no-cache"
+  };
+}
+
 function sendRedirect(res, location, headers = {}) {
   res.writeHead(302, {
     ...headers,
@@ -208,4 +217,4 @@ async function sendApiResult(res, result) {
   sendJson(res, 200, result);
 }
 
-export { sendApiResult, sendFile, sendJson, sendNotFound, sendRedirect };
+export { createNoStoreHeaders, sendApiResult, sendFile, sendJson, sendNotFound, sendRedirect };

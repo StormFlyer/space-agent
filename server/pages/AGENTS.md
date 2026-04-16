@@ -98,6 +98,7 @@ Rules:
 - keep the shared favicon asset family in `server/pages/res/`, derive it from the onscreen-agent assistant helmet avatar, keep the background transparent, and scale the helmet to fill the available icon space without reintroducing a badge or circular plate
 - keep the manifest icon entries as standard install icons rather than `maskable` assets unless the icon family is intentionally redesigned for adaptive-icon safe zones
 - server page shells must not load remote runtime resources; scripts, styles, fonts, images, icons, and recovery visuals must be local files or inline SVG/CSS so `/login`, `/enter`, `/`, and `/admin` can load without internet access
+- page-shell HTML and mirrored public assets should be served with explicit no-store headers so recovery-safe shells and their helper scripts refresh immediately after source updates on every origin
 - external `https://...` URLs in page shells are allowed only as explicit user navigation targets, never as required runtime assets
 
 ## Development Guidance

@@ -148,6 +148,7 @@ Core runtime contracts:
 - `HOST` and `PORT` come from the same runtime-parameter system as other server params instead of a special-case startup path; `PORT=0` is valid when a caller wants the OS to assign a free port, and the started runtime object must publish the resolved bound `port` and `browserUrl` after `listen()`
 - `/api/proxy`, `/mod/...`, and direct app-file fetches require an authenticated session unless an endpoint explicitly opts into anonymous access
 - `/mod/...` resolution uses the layered customware model and honors `maxLayer`, which defaults to `2`
+- `/mod/...`, page-shell HTML, and `server/pages/res/` helper assets should be served with explicit no-store headers so reloads replace stale origin-scoped browser or proxy caches after source updates
 - `/admin` requests effectively force `maxLayer=0` for module and extension resolution through explicit request data, query parameters, the `X-Space-Max-Layer` request header, or admin-origin fallback
 - `/~/path` maps to the authenticated user's `L2/<username>/path`
 - logical `/app/L1/...` and `/app/L2/...` paths may resolve to disk outside the repo when `CUSTOMWARE_PATH` is configured, while `/app/L0/...` remains repo-backed

@@ -76,6 +76,7 @@ For debugging, both layers log failures aggressively:
 - worker `console.error` calls are forwarded back across the worker protocol as structured payloads, so runtime logs can still be inspected from the page console even when the browser reports only an opaque worker crash
 - common ONNX Runtime WebGPU out-of-memory failures are also collapsed into a shorter user-facing error message in the shared manager, while the raw console trace remains available for debugging
 - the worker also emits explicit trace markers for major load phases such as runtime import and pipeline load; when the browser only reports a bare worker `error` event, the page can still report the last known phase
+- prompt preparation also emits trace markers for processor-template, tokenizer-template, and fallback-template selection plus branch-failure traces, and model load also emits processor-load traces when the worker has to hydrate an `AutoProcessor` outside the text-generation pipeline, so live console debugging can confirm whether a model is using its intended chat-template path
 - when a worker dies during startup, the page clears the dead worker instance and queued load state so a later retry can spawn a fresh worker instead of remaining stuck in `Queued`
 - the bootstrap worker exists specifically so heavy worker import/startup failures can be surfaced as at least one explicit trace/log payload before the browser falls back to a generic worker `error` event
 - the worker also accepts optional extra generation `requestOptions` so other local callers such as the admin and onscreen agents can reuse the same routed worker contract instead of forking a second Hugging Face worker implementation
@@ -139,8 +140,8 @@ Current behavior:
 The chat flow is intentionally minimal:
 
 1. the store builds a plain message list from the system prompt plus prior user/assistant turns
-2. the worker prepares one final prompt string from that message list, preferring the loaded model's processor chat template so Gemma-style ONNX repos keep their model-authored `system`/`user`/`assistant` formatting, falling back to the tokenizer's chat template when available, and only then serializing the chat into one API-style fallback prompt with `System instructions:`, `Conversation:`, and trailing `Assistant:` sections
-3. the worker tokenizes that same prepared prompt for metrics and passes the prepared prompt string into the Transformers.js text-generation pipeline, instead of passing raw chat-message arrays back into the pipeline after a fallback
+2. the worker prepares one final prompt string from that message list, explicitly loading an `AutoProcessor` when the text-generation pipeline does not expose one, preferring that processor chat template so Gemma-style ONNX repos keep their model-authored `system`/`user`/`assistant` formatting, falling back to the tokenizer's chat template when available, and only then serializing the chat into one API-style fallback prompt with `System instructions:`, `Conversation:`, and trailing `Assistant:` sections
+3. the worker tokenizes that same prepared prompt string for metrics, instead of relying on the Gemma processor's direct `tokenize: true` chat-template path, and passes the prepared prompt string into the Transformers.js text-generation pipeline instead of passing raw chat-message arrays back into the pipeline after a fallback
 4. generation streams partial text back into the current assistant message
 5. stop uses a worker-owned stopping-criteria gate so generation can end cleanly with `finishReason: "abort"`
 6. when generation ends, the worker sends the final text plus measured metrics

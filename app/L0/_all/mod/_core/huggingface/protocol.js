@@ -1,4 +1,4 @@
-export const WORKER_RUNTIME_VERSION = "2026-04-16-processor-template-v1";
+export const WORKER_RUNTIME_VERSION = "2026-04-16-auto-processor-v1";
 
 export const WORKER_INBOUND = {
   BOOT: "boot",

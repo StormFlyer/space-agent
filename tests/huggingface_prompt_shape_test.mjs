@@ -49,11 +49,26 @@ test("huggingface worker prefers the model processor chat template before fallba
   const workerSource = await fs.readFile(workerPath, "utf8");
 
   assert.ok(workerSource.includes("let processor = null;"));
+  assert.ok(workerSource.includes("async function resolveChatProcessor(runtimeModule, modelId, loadOptions = {})"));
+  assert.ok(workerSource.includes("const { AutoProcessor } = runtimeModule || {};"));
+  assert.ok(workerSource.includes("const loadedProcessor = await AutoProcessor.from_pretrained(modelId, loadOptions);"));
   assert.ok(workerSource.includes('if (typeof processor?.apply_chat_template === "function")'));
   assert.ok(workerSource.includes("const promptText = processor.apply_chat_template(messages, {"));
   assert.ok(workerSource.includes("enable_thinking: false"));
-  assert.ok(workerSource.includes("processor = generator?.processor || null;"));
-  assert.ok(workerSource.includes("tokenizer = processor?.tokenizer || generator?.tokenizer || null;"));
+  assert.ok(workerSource.includes("Gemma processor tokenization can throw"));
+  assert.ok(!workerSource.includes("processor.apply_chat_template(messages, {\n          add_generation_prompt: true,\n          enable_thinking: false,\n          return_dict: true,\n          tokenize: true\n        });"));
+  assert.ok(workerSource.includes("const promptInputs = await tokenizer(promptText, {"));
+  assert.ok(workerSource.includes("return_tensor: false"));
+  assert.ok(workerSource.includes('postTrace("processor-load:start"'));
+  assert.ok(workerSource.includes('postTrace("processor-load:done"'));
+  assert.ok(workerSource.includes('postTrace("processor-load:failed"'));
+  assert.ok(workerSource.includes('postTrace("prompt:processor-template"'));
+  assert.ok(workerSource.includes('postTrace("prompt:processor-template-failed"'));
+  assert.ok(workerSource.includes('postTrace("prompt:tokenizer-template"'));
+  assert.ok(workerSource.includes('postTrace("prompt:tokenizer-template-failed"'));
+  assert.ok(workerSource.includes('postTrace("prompt:fallback-template"'));
+  assert.ok(workerSource.includes("const resolvedProcessor = await resolveChatProcessor(runtimeModule, modelId, {"));
+  assert.ok(workerSource.includes("tokenizer = generator?.tokenizer || processor?.tokenizer || null;"));
 });
 
 test("huggingface worker loader versions bootstrap and runtime module urls", async () => {
@@ -66,7 +81,7 @@ test("huggingface worker loader versions bootstrap and runtime module urls", asy
     fs.readFile(bootstrapPath, "utf8")
   ]);
 
-  assert.ok(protocolSource.includes('export const WORKER_RUNTIME_VERSION = "2026-04-16-processor-template-v1";'));
+  assert.ok(protocolSource.includes('export const WORKER_RUNTIME_VERSION = "2026-04-16-auto-processor-v1";'));
   assert.ok(managerSource.includes('workerUrl.searchParams.set("v", WORKER_RUNTIME_VERSION);'));
   assert.ok(bootstrapSource.includes('runtimeUrl.searchParams.set("v", WORKER_RUNTIME_VERSION);'));
 });

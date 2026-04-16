@@ -55,6 +55,7 @@ This scope owns:
 - `project_version_test.mjs`: focused helper coverage for package-version display tags and project-version fallback behavior used by the CLI and page shells
 - `onscreen_agent_prompt_shape_test.mjs`: focused overlay-agent prompt-shaping coverage for attachment block splitting and the example-to-live-history reset boundary
 - `huggingface_prompt_shape_test.mjs`: focused local-LLM prompt-shaping coverage for the Hugging Face API-style fallback prompt format and the onscreen local-client folded-transport message contract
+- `router_cache_headers_test.mjs`: focused server-router coverage for no-store cache headers on `/mod/...`, page shells, and public page resources so runtime code updates replace stale origin-scoped module caches after reload
 - shared expectations for test config, fixtures, scripted execution, and saved evaluation results
 
 ## Local Contracts

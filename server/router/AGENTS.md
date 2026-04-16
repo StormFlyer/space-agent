@@ -80,6 +80,7 @@ Pages:
 Modules:
 
 - `mod_handler.js` resolves `/mod/...` through `server/lib/customware/module_inheritance.js`
+- `/mod/...`, page-shell HTML, and `server/pages/res/` asset responses should be emitted with explicit no-store headers so source updates replace stale browser or proxy caches on reload across origins such as `localhost`, `127.0.0.1`, and deployed hosts
 - request-time module serving should consume the replicated shared state interface passed into the router, not reach back into watchdog-specific scanning helpers
 - logical `L1` and `L2` module overrides may come from the configured `CUSTOMWARE_PATH` storage root even though request paths stay `/mod/...`
 - `maxLayer` is read from explicit request data, query params, the `X-Space-Max-Layer` request header, or admin-origin fallback through `layer_limit.js`

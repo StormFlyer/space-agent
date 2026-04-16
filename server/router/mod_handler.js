@@ -4,7 +4,7 @@ import { resolveRequestMaxLayer } from "../lib/customware/layer_limit.js";
 import { resolveProjectPathFromAbsolute } from "../lib/customware/layout.js";
 import { hasIndexedProjectPath } from "../lib/customware/module_state.js";
 import { resolveInheritedModuleProjectPath } from "../lib/customware/module_inheritance.js";
-import { sendFile, sendNotFound } from "./responses.js";
+import { createNoStoreHeaders, sendFile, sendNotFound } from "./responses.js";
 
 function resolveModuleFilePath(projectRoot, requestPath, username, stateSystem, options = {}) {
   const normalizedPath = path.posix.normalize(requestPath);
@@ -49,6 +49,7 @@ function handleModuleRequest(res, requestPath, options = {}) {
   const knownMissing = Boolean(stateSystem && projectPath && !hasIndexedProjectPath(stateSystem, projectPath));
 
   sendFile(res, filePath, {
+    headers: createNoStoreHeaders(),
     knownMissing
   });
 }
