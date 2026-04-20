@@ -6,6 +6,9 @@ import {
   serializeBrowserFrameError
 } from "./browser-frame-protocol.js";
 import {
+  logBrowser
+} from "./browser-logging.js";
+import {
   isWebviewLike
 } from "./browser-webview.js";
 
@@ -126,6 +129,11 @@ export function createBrowserWebviewBridge(webview, options = {}) {
 
   function postEnvelope(envelope) {
     ensureActive();
+    logBrowser("debug", "[space-browser/webview-bridge] Sending envelope to guest.", {
+      phase: envelope.phase,
+      type: envelope.type,
+      requestId: String(envelope.requestId || "")
+    });
     webview.send(BROWSER_FRAME_BRIDGE_CHANNEL, envelope);
     return envelope;
   }
@@ -252,7 +260,14 @@ export function createBrowserWebviewBridge(webview, options = {}) {
       return;
     }
 
-    handleEnvelope(event.args?.[0] ?? null);
+    const envelope = event.args?.[0] ?? null;
+    logBrowser("debug", "[space-browser/webview-bridge] Received envelope from guest.", {
+      phase: String(envelope?.phase || ""),
+      type: String(envelope?.type || ""),
+      requestId: String(envelope?.requestId || "")
+    });
+
+    handleEnvelope(envelope);
   };
 
   webview.addEventListener("ipc-message", handleIpcMessage);

@@ -1,7 +1,7 @@
+import { buildBrowserGuestRuntimeScriptPaths } from "./browser-guest-runtime.js";
+import { logBrowser } from "./browser-logging.js";
+
 const DEFAULT_WEBVIEW_PARTITION_PREFIX = "space-browser-";
-const BROWSER_FRAME_INJECT_PRELUDE_PATHS = Object.freeze([
-  "/mod/_core/web_browsing/browser-page-content.js"
-]);
 const WEBVIEW_SHADOW_STYLE_ATTRIBUTE = "data-space-browser-webview-style";
 const WEBVIEW_EMBEDDER_FRAME_SELECTOR = "iframe, embed, object, browserplugin";
 
@@ -287,15 +287,27 @@ async function fetchInjectSource(injectPath) {
   }
 
   const loadPromise = (async () => {
+    const runtimeContext = await buildBrowserGuestRuntimeScriptPaths({
+      injectPath: normalizedInjectPath,
+      postBootstrapScriptPaths: [],
+      preBootstrapScriptPaths: []
+    });
+    const preBootstrapScriptPaths = Array.isArray(runtimeContext?.preBootstrapScriptPaths)
+      ? runtimeContext.preBootstrapScriptPaths
+      : [];
+    const postBootstrapScriptPaths = Array.isArray(runtimeContext?.postBootstrapScriptPaths)
+      ? runtimeContext.postBootstrapScriptPaths
+      : [];
     const sources = await Promise.all([
-      ...BROWSER_FRAME_INJECT_PRELUDE_PATHS.map((scriptPath) => fetchSourceText(scriptPath)),
-      fetchSourceText(normalizedInjectPath)
+      ...preBootstrapScriptPaths.map((scriptPath) => fetchSourceText(scriptPath)),
+      fetchSourceText(normalizedInjectPath),
+      ...postBootstrapScriptPaths.map((scriptPath) => fetchSourceText(scriptPath))
     ]);
 
     return sources
       .map((source) => String(source || "").trim())
       .filter(Boolean)
-      .join("\n\n");
+      .join("\n;\n");
   })();
 
   injectSourceCache.set(normalizedInjectPath, loadPromise);
@@ -316,6 +328,7 @@ export function collectWebviewNavigationState(webview) {
   return {
     canGoBack: Boolean(callWebviewMethod(webview, "canGoBack", false)),
     canGoForward: Boolean(callWebviewMethod(webview, "canGoForward", false)),
+    loading: Boolean(callWebviewMethod(webview, "isLoading", false)),
     title: String(callWebviewMethod(webview, "getTitle", "") || ""),
     // Electron throws for several getters before the guest is fully ready.
     // Fall back to the embedder src so toolbar state can stay stable.
@@ -429,4 +442,9 @@ export async function injectBrowserWebviewRuntime(webview, options = {}) {
   const source = `(() => {\n  const bootstrap = ${JSON.stringify(bootstrap)};\n  globalThis.__spaceBrowserInjectBootstrap__ = bootstrap;\n  globalThis.__spaceBrowserFrameInjectBootstrap__ = bootstrap;\n  try {\n${scriptSource}\n  } finally {\n    delete globalThis.__spaceBrowserInjectBootstrap__;\n    delete globalThis.__spaceBrowserFrameInjectBootstrap__;\n  }\n})();\n//# sourceURL=${sourceUrl}`;
 
   await webview.executeJavaScript(source, true);
+  logBrowser("debug", `[space-browser] Injected browser runtime into ${browserId}.`, {
+    browserId,
+    injectPath,
+    scriptUrl
+  });
 }

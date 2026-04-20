@@ -92,7 +92,7 @@ Important rules:
 
 Important rules:
 
-- when `LOGIN_ALLOWED=false`, `/api/login_challenge`, `/api/login`, and `/api/login_check` reject password-login attempts
+- when `LOGIN_ALLOWED=false`, normal password-login entry is blocked, but `login_check` still reports session state and guest usernames may still finish the background login path used by guest or share flows
 - existing authenticated sessions still resolve normally from `space_session`
 - the public `/login` shell remains available, but it swaps the form for disabled-copy fallback so the site can stay open as a non-login landing page
 

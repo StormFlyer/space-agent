@@ -1,3 +1,4 @@
+import { setPromptItem } from "/mod/_core/agent_prompt/prompt-items.js";
 import { getStore } from "/mod/_core/framework/js/AlpineStore.js";
 
 const OPEN_BROWSERS_TRANSIENT_HEADING = "currently open web browsers";
@@ -67,32 +68,32 @@ export function buildOpenBrowsersTransientSection(webBrowsingStore = getStore("w
   }
 
   return {
-    content: [
-      "browser id|url|title",
-      ...rows.map((row) => `${row.id}|${row.url}|${row.title}`)
-    ].join("\n"),
     heading: OPEN_BROWSERS_TRANSIENT_HEADING,
     key: OPEN_BROWSERS_TRANSIENT_KEY,
-    order: 20
+    order: 20,
+    value: [
+      "browser id|url|title",
+      ...rows.map((row) => `${row.id}|${row.url}|${row.title}`)
+    ].join("\n")
   };
 }
 
 export default async function injectOpenBrowsersTransientSection(hookContext) {
   const promptContext = hookContext?.result;
 
-  if (!promptContext || !Array.isArray(promptContext.sections)) {
+  if (!promptContext) {
     return;
   }
 
   const openBrowsersTransientSection = buildOpenBrowsersTransientSection();
 
-  promptContext.sections = promptContext.sections.filter(
-    (section) => String(section?.key || "").trim() !== OPEN_BROWSERS_TRANSIENT_KEY
-  );
-
   if (!openBrowsersTransientSection) {
     return;
   }
 
-  promptContext.sections = promptContext.sections.concat(openBrowsersTransientSection);
+  promptContext.transientItems = setPromptItem(
+    promptContext.transientItems,
+    OPEN_BROWSERS_TRANSIENT_KEY,
+    openBrowsersTransientSection
+  );
 }

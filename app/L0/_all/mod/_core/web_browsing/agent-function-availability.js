@@ -22,6 +22,19 @@ const RUNTIME_CONTEXT_SELECTOR = `${CONTEXT_SELECTOR}[${CONTEXT_RUNTIME_ATTRIBUT
 
 let cachedRuntimeContext = "";
 
+function emitAgentFunctionBlockNotice(result) {
+  const message = String(result?.message || result?.warning || "").trim();
+  if (!message) {
+    return;
+  }
+
+  try {
+    globalThis.console?.log?.(message);
+  } catch {
+    // Ignore console availability issues in nonstandard runtimes.
+  }
+}
+
 function normalizeRuntimeContext(value) {
   const normalizedValue = String(value || "").trim();
   return normalizedValue === RUNTIME_CONTEXT.APP || normalizedValue === RUNTIME_CONTEXT.BROWSER
@@ -93,6 +106,7 @@ export function guardAgentFunction(requirementName, handler, details = {}) {
   return function guardedAgentFunction(...args) {
     const blockedResult = getAgentFunctionBlockResult(requirementName, details);
     if (blockedResult) {
+      emitAgentFunctionBlockNotice(blockedResult);
       return blockedResult;
     }
 

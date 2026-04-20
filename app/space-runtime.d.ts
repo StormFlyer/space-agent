@@ -321,9 +321,34 @@ type SpaceChatMessage = {
   streaming: boolean;
 };
 
+type SpaceChatPromptItem = {
+  blockType: string;
+  content: string;
+  heading: string;
+  id: number;
+  key: string;
+  messageId: string;
+  order: number;
+  part: string;
+  removedChars: number;
+  role: string;
+  source: string;
+  sourcePath: string;
+  tokens: number;
+  trimmed: boolean;
+};
+
+type SpaceChatReadLongMessageOptions = {
+  from?: number;
+  id: number;
+  to?: number;
+};
+
 type SpaceChat = {
   attachments: SpaceChatAttachments;
   messages: SpaceChatMessage[];
+  promptItems: SpaceChatPromptItem[];
+  readLongMessage(options: SpaceChatReadLongMessageOptions): string;
   transient: SpaceChatTransient;
 };
 
@@ -586,8 +611,180 @@ type SpaceSpacesNamespace = {
   [key: string]: any;
 };
 
+type SpaceBrowserWindowState = {
+  addressValue?: string;
+  bridgeHandlersReady?: boolean;
+  bridgeReady?: boolean;
+  bridgeStateReady?: boolean;
+  bridgeTransportReady?: boolean;
+  browserId?: number;
+  browserInternalId?: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  coreReady?: boolean;
+  currentUrl?: string;
+  frameSrc?: string;
+  id?: number;
+  instanceKey?: number;
+  isMinimized?: boolean;
+  loading?: boolean;
+  position?: {
+    x?: number;
+    y?: number;
+  };
+  preloadReady?: boolean;
+  size?: {
+    height?: number;
+    width?: number;
+  };
+  title?: string;
+  zIndex?: number;
+  [key: string]: any;
+};
+
+type SpaceBrowserContentOptions = {
+  includeLabelQuotes?: boolean;
+  includeLinkUrls?: boolean;
+  includeListIndentation?: boolean;
+  includeListMarkers?: boolean;
+  includeSemanticTags?: boolean;
+  includeStateTags?: boolean;
+  selectors?: string[];
+  [key: string]: any;
+};
+
+type SpaceBrowserCaptureResult = {
+  captureId?: number;
+  capturedAt?: number;
+  document?: string;
+  [key: string]: any;
+};
+
+type SpaceBrowserReferenceState = {
+  blocked?: boolean;
+  busy?: boolean;
+  checked?: boolean;
+  current?: boolean;
+  cursor?: string;
+  descriptorTags?: string[];
+  disabled?: boolean;
+  expanded?: boolean;
+  invalid?: boolean;
+  opacity?: number;
+  pointerEventsNone?: boolean;
+  pressed?: boolean;
+  readonly?: boolean;
+  required?: boolean;
+  selected?: boolean;
+  semanticTags?: string[];
+  semanticTone?: string;
+  stateTags?: string[];
+  visible?: boolean;
+  zeroRect?: boolean;
+  [key: string]: any;
+};
+
+type SpaceBrowserDetailResult = {
+  captureId?: number;
+  capturedAt?: number;
+  connected?: boolean;
+  descriptorTags?: string[];
+  dom?: string;
+  frameChain?: string[];
+  frameId?: string;
+  nodeId?: string;
+  referenceId?: number | string;
+  semanticTags?: string[];
+  state?: SpaceBrowserReferenceState;
+  summary?: string;
+  tagName?: string;
+  [key: string]: any;
+};
+
+type SpaceBrowserActionStatus = {
+  alertTextAdded?: boolean;
+  checkedChanged?: boolean;
+  descriptorChanged?: boolean;
+  domChanged?: boolean;
+  expandedChanged?: boolean;
+  focusChanged?: boolean;
+  historyChanged?: boolean;
+  navigated?: boolean;
+  nearbyTextChanged?: boolean;
+  noObservedEffect?: boolean;
+  pressedChanged?: boolean;
+  reacted?: boolean;
+  selectedChanged?: boolean;
+  targetChanged?: boolean;
+  targetDomChanged?: boolean;
+  titleChanged?: boolean;
+  urlChanged?: boolean;
+  validationTextAdded?: boolean;
+  valueChanged?: boolean;
+  [key: string]: boolean | undefined;
+};
+
+type SpaceBrowserActionEffect = {
+  mutationAttributes?: string[];
+  mutationCount?: number;
+  newText?: string[];
+  semanticHints?: string[];
+  validationText?: string[];
+  [key: string]: any;
+};
+
+type SpaceBrowserActionResult = {
+  captureId?: number;
+  descriptorTags?: string[];
+  effect?: SpaceBrowserActionEffect;
+  frameChain?: string[];
+  frameId?: string;
+  nodeId?: string;
+  referenceId?: number | string;
+  semanticTags?: string[];
+  state?: SpaceBrowserReferenceState;
+  status?: SpaceBrowserActionStatus;
+  summary?: string;
+  tagName?: string;
+  value?: string;
+  [key: string]: any;
+};
+
+type SpaceBrowserInteractionResult = {
+  action: SpaceBrowserActionResult;
+  state: SpaceBrowserWindowState;
+};
+
+type SpaceBrowserNamespace = {
+  back(id: number | string): Promise<SpaceBrowserWindowState>;
+  click(id: number | string, ref: number | string): Promise<SpaceBrowserInteractionResult>;
+  close(id: number | string): any;
+  closeAll(): any;
+  content(id: number | string, payload?: SpaceBrowserContentOptions | null, options?: Record<string, any>): Promise<SpaceBrowserCaptureResult>;
+  count(): number;
+  create(options?: string | { url?: string; [key: string]: any }): Promise<SpaceBrowserWindowState>;
+  detail(id: number | string, ref: number | string, options?: Record<string, any>): Promise<SpaceBrowserDetailResult>;
+  dom(id: number | string, payload?: SpaceBrowserContentOptions | null, options?: Record<string, any>): Promise<SpaceBrowserCaptureResult>;
+  focus(id: number | string, options?: Record<string, any>): Promise<SpaceBrowserWindowState>;
+  forward(id: number | string): Promise<SpaceBrowserWindowState>;
+  has(id: number | string): boolean;
+  ids(): number[];
+  list(): SpaceBrowserWindowState[];
+  navigate(id: number | string, url: string): Promise<SpaceBrowserWindowState>;
+  open(options?: string | { url?: string; [key: string]: any }): Promise<SpaceBrowserWindowState>;
+  reload(id: number | string): Promise<SpaceBrowserWindowState>;
+  scroll(id: number | string, ref: number | string): Promise<SpaceBrowserInteractionResult>;
+  send(id: number | string, type: string, payload?: any, options?: Record<string, any>): Promise<any>;
+  setLogLevel(level: "debug" | "info" | "warn" | "error" | "silent" | string): string;
+  state(id: number | string): Promise<SpaceBrowserWindowState>;
+  submit(id: number | string, ref: number | string): Promise<SpaceBrowserInteractionResult>;
+  type(id: number | string, ref: number | string, value?: string): Promise<SpaceBrowserInteractionResult>;
+  typeSubmit(id: number | string, ref: number | string, value?: string): Promise<SpaceBrowserInteractionResult>;
+};
+
 type SpaceRuntime = {
   api?: SpaceApi;
+  browser?: SpaceBrowserNamespace;
   chat?: SpaceChat;
   current?: SpaceCurrentNamespace | null;
   extend: SpaceExtend;

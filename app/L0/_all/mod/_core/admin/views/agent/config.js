@@ -1,6 +1,8 @@
+import { DEFAULT_PROMPT_BUDGET_RATIOS, normalizePromptBudgetRatios } from "/mod/_core/agent_prompt/prompt-items.js";
+
 export const ADMIN_CHAT_CONFIG_PATH = "~/conf/admin-chat.yaml";
 export const ADMIN_CHAT_HISTORY_PATH = "~/hist/admin-chat.json";
-export const DEFAULT_ADMIN_CHAT_MAX_TOKENS = 64_000;
+export const DEFAULT_ADMIN_CHAT_MAX_TOKENS = 120_000;
 export const ADMIN_CHAT_LLM_PROVIDER = {
   API: "api",
   LOCAL: "local"
@@ -19,6 +21,7 @@ export const DEFAULT_ADMIN_CHAT_SETTINGS = {
   maxTokens: DEFAULT_ADMIN_CHAT_MAX_TOKENS,
   model: "openai/gpt-5.4-mini",
   paramsText: "temperature:0.2",
+  promptBudgetRatios: { ...DEFAULT_PROMPT_BUDGET_RATIOS },
   provider: ADMIN_CHAT_LLM_PROVIDER.API
 };
 
@@ -113,6 +116,10 @@ export function normalizeAdminChatMaxTokens(value) {
   } catch {
     return DEFAULT_ADMIN_CHAT_MAX_TOKENS;
   }
+}
+
+export function normalizeAdminChatPromptBudgetRatios(value = {}) {
+  return normalizePromptBudgetRatios(value);
 }
 
 export function formatAdminChatTokenCount(tokenCount) {

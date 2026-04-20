@@ -18,6 +18,7 @@ This surface owns:
 - `config.js` and `storage.js`: persisted settings and history contract
 - `system-prompt.md`, `compact-prompt.md`, and `compact-prompt-auto.md`: firmware prompt files
 - `skills.js`: admin skill runtime aliases, exposing both `space.admin.loadSkill(...)` and `space.skills.load(...)` through shared `/mod/_core/skillset/skills.js`
+- `store.js` also owns the assistant-message evaluation seam `_core/admin/views/agent/store.js/evaluateAdminAssistantMessage`
 
 ## Persistence And Prompt Contract
 
@@ -35,6 +36,7 @@ Current stored config fields are written in YAML as:
 - `model`
 - `params`
 - `max_tokens`
+- `prompt_budget_ratios`
 - `huggingface_model`
 - `huggingface_dtype`
 - optional `custom_system_prompt`
@@ -54,7 +56,8 @@ Current defaults:
 - API endpoint: `https://openrouter.ai/api/v1/chat/completions`
 - model: `openai/gpt-5.4-mini`
 - params: `temperature:0.2`
-- compaction threshold: `64000` tokens
+- max tokens: `120000`
+- prompt-budget ratios: `system 30`, `history 40`, `transient 30`, `singleMessage 10`
 
 Prompt rules:
 
@@ -91,12 +94,14 @@ Current behavior:
 - local-provider sends should use the same prepared prompt that API mode uses, so provider switches do not fork prompt assembly, prompt history, or transient context handling
 - save should persist the selected local model config even when the model is not loaded yet; saving local settings should also start background load or download for the configured model, while the first admin send still acts as the fallback load trigger if that preparation has not finished yet
 - the local provider section exposes a button that opens the full Hugging Face testing chat route in a new tab for fuller inspection or experimentation, but that route is no longer the only place where local model preparation can happen
-- the settings modal keeps `maxTokens` and `paramsText` as shared controls below the provider-specific sections so remote API and local HuggingFace use the same compaction threshold and request-params surface
+- the settings modal keeps `maxTokens`, shared prompt-budget controls, and `paramsText` below the provider-specific sections so remote API and local HuggingFace use the same context-budget and request-params surface
+- those shared prompt-budget ratios feed the same trimming path as the onscreen agent: prepared entries and prompt items reuse cached token counts, single live history messages are capped first, contributor-level part trims must be at least `250` tokens each, and `system` or `transient` falls back to one combined section-body trim when smaller contributor cuts would be required
 - the admin agent keeps one shared prompt assembly or compaction or execution loop and branches only at the final LLM transport call between API fetch streaming and the Hugging Face manager
 - `llm-params.js` delegates YAML parsing to the shared framework `js/yaml-lite.js` utility but still enforces the admin-agent-specific top-level `key: value` params contract
 - `huggingface.js` should stay limited to admin-facing snapshot shaping or helper glue around `_core/huggingface/manager.js`; do not reintroduce a second admin-side Hugging Face transport path when the shared manager already owns load or unload or stream behavior
 - browser execution blocks are detected by the `_____javascript` separator
 - `execution.js` runs browser-side JavaScript in an async wrapper; console logs and ordinary returned arrays or objects should both use the same YAML-first transcript serializer, with `log↓` or `info↓` or `warn↓` or `error↓` or related block labels for console output and `result↓` for returned values, falling back to JSON only when the lightweight YAML helper cannot serialize the shape
+- `_core/admin/views/agent/store.js/evaluateAdminAssistantMessage` is the extension seam that evaluates a settled assistant message immediately before execution results are serialized into the admin `execution-output` follow-up turn; `_core/agent-chat` currently provides the first-party repeated-message detector there, emitting loop notices on the 2nd exact assistant-message send as `info`, on the 3rd send as `warn`, and on the 4th send onward as `error`
 - when an execution follow-up turn returns no assistant content, the runtime retries the same request once automatically before sending a short protocol-correction user message
 - empty-response protocol-correction messages must not re-echo the prior execution output; they should tell the agent to continue from the execution output above or provide the user-facing answer
 - loaded admin skills are passed through execution as typed runtime values, not pasted blindly into the prompt
@@ -105,11 +110,12 @@ Current behavior:
 - `view.js` must source the empty-state astronaut plus the shared assistant helmet from `/mod/_core/visual/res/chat/admin/`; do not reintroduce duplicate admin-chat avatar files under `_core/admin/res/`
 - `agent.css` may customize shared visual button primitives only under `.admin-agent-root`; the admin shell mounts tab components together, so unscoped `.secondary-button`, `.primary-button`, or `.confirm-button` rules leak into other admin surfaces such as the shared Files explorer
 - `view.js` enables the shared marked-backed chat-bubble markdown renderer for settled admin assistant responses while keeping submitted user bubbles on plain pre-wrapped text so typed blank lines stay literal, matching the shared thread-view contract used by the onscreen agent
-- `store.js` publishes the active admin thread snapshot at `space.chat`, including `messages` and live `attachments` helpers for the current surface
+- `store.js` publishes the active admin thread snapshot at `space.chat`, including `messages`, live `attachments` helpers for the current surface, the current-turn `promptItems` metadata list, and `readLongMessage({ id, from, to })` for trimmed prompt contributors
 - caught admin runtime errors should be logged through `console.error`; status text may still surface the user-facing message, but raw failures must not disappear into the composer placeholder alone
 - assistant streaming is patched into the existing DOM at animation-frame cadence instead of full-thread rerenders
 - prompt history token counts are tracked, shown in the UI, and used for compaction decisions
 - the composer accepts attachments from either the file picker or direct file drag-and-drop onto the chat box
+- the admin composer textarea should stay visually borderless while focused; neutralize any shared app-shell focus outline locally inside this surface instead of drawing an input ring around the chat box
 - the composer is disabled while compaction is actively running
 - the loop supports stop requests and queued follow-up submissions
 - restored attachment metadata is revalidated against current file availability

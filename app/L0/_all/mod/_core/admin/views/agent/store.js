@@ -1,5 +1,9 @@
 import * as config from "/mod/_core/admin/views/agent/config.js";
 import * as agentApi from "/mod/_core/admin/views/agent/api.js";
+import {
+  installPromptItemAccess,
+  rebalancePromptBudgetRatios
+} from "/mod/_core/agent_prompt/prompt-items.js";
 import * as execution from "/mod/_core/admin/views/agent/execution.js";
 import * as llmParams from "/mod/_core/admin/views/agent/llm-params.js";
 import * as prompt from "/mod/_core/admin/views/agent/prompt.js";
@@ -9,6 +13,10 @@ import * as agentView from "/mod/_core/admin/views/agent/view.js";
 import {
   mapManagerStateToAdminState
 } from "/mod/_core/admin/views/agent/huggingface.js";
+import {
+  normalizeAssistantEvaluationLogEntry,
+  prependAssistantEvaluationLogs
+} from "/mod/_core/agent-chat/assistant-message-evaluation.js";
 import { DEFAULT_MODEL_INPUT, DTYPE_OPTIONS, normalizeHuggingFaceModelInput } from "/mod/_core/huggingface/helpers.js";
 import { getHuggingFaceManager } from "/mod/_core/huggingface/manager.js";
 import { closeDialog, openDialog } from "/mod/_core/visual/forms/dialog.js";
@@ -21,6 +29,50 @@ import {
 } from "/mod/_core/admin/views/agent/attachments.js";
 
 const huggingfaceManager = getHuggingFaceManager();
+
+function normalizePromptBudgetSingleMessageRatio(
+  value,
+  fallback = config.DEFAULT_ADMIN_CHAT_SETTINGS.promptBudgetRatios.singleMessage
+) {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsedValue)));
+}
+
+function clonePromptBudgetRatios(value = {}) {
+  return {
+    ...config.normalizeAdminChatPromptBudgetRatios(value)
+  };
+}
+
+function createPromptBudgetSegments(ratios = {}) {
+  const normalizedRatios = clonePromptBudgetRatios(ratios);
+
+  return [
+    {
+      colorClass: "prompt-budget-segment-system",
+      key: "system",
+      label: "System",
+      value: normalizedRatios.system
+    },
+    {
+      colorClass: "prompt-budget-segment-history",
+      key: "history",
+      label: "History",
+      value: normalizedRatios.history
+    },
+    {
+      colorClass: "prompt-budget-segment-transient",
+      key: "transient",
+      label: "Transient",
+      value: normalizedRatios.transient
+    }
+  ];
+}
 
 function getRuntime() {
   const runtime = globalThis.space;
@@ -55,7 +107,7 @@ function ensureChatRuntime(targetRuntime) {
     targetRuntime.chat.attachments = createAttachmentRuntime();
   }
 
-  return targetRuntime.chat;
+  return installPromptItemAccess(targetRuntime.chat);
 }
 
 function createMessage(role, content, options = {}) {
@@ -154,6 +206,21 @@ function logAdminAgentError(context, error) {
 
 const MAX_PROTOCOL_RETRY_COUNT = 2;
 const MAX_COMPACT_TRIM_ATTEMPTS = 4;
+
+const evaluateAdminAssistantMessage = globalThis.space.extend(
+  import.meta,
+  async function evaluateAdminAssistantMessage(context = {}) {
+    return {
+      assistantContent: typeof context?.assistantContent === "string" ? context.assistantContent : "",
+      history: Array.isArray(context?.history) ? context.history : [],
+      logs: Array.isArray(context?.logs)
+        ? context.logs.map((entry) => normalizeAssistantEvaluationLogEntry(entry)).filter(Boolean)
+        : [],
+      messageId: typeof context?.messageId === "string" ? context.messageId : "",
+      store: context?.store || null
+    };
+  }
+);
 
 function isContextLengthError(error) {
   const msg = (error?.message || "").toLowerCase();
@@ -313,6 +380,7 @@ const model = {
     maxTokens: config.DEFAULT_ADMIN_CHAT_SETTINGS.maxTokens,
     model: "",
     paramsText: "",
+    promptBudgetRatios: { ...config.DEFAULT_ADMIN_CHAT_SETTINGS.promptBudgetRatios },
     provider: config.DEFAULT_ADMIN_CHAT_SETTINGS.provider
   },
   settingsDraft: {
@@ -324,6 +392,7 @@ const model = {
     maxTokens: config.DEFAULT_ADMIN_CHAT_SETTINGS.maxTokens,
     model: "",
     paramsText: "",
+    promptBudgetRatios: { ...config.DEFAULT_ADMIN_CHAT_SETTINGS.promptBudgetRatios },
     provider: config.DEFAULT_ADMIN_CHAT_SETTINGS.provider
   },
   status: "Loading admin agent...",
@@ -597,6 +666,14 @@ const model = {
     return `${config.formatAdminChatTokenCount(this.historyTokenCount)} tokens`;
   },
 
+  get settingsDraftPromptBudgetRatios() {
+    return clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios);
+  },
+
+  get settingsDraftPromptBudgetSegments() {
+    return createPromptBudgetSegments(this.settingsDraft.promptBudgetRatios);
+  },
+
   get isAttachmentPickerDisabled() {
     return !this.isInitialized || this.isLoadingDefaultSystemPrompt || this.isCompactingHistory;
   },
@@ -696,7 +773,9 @@ const model = {
       content: typeof message?.content === "string" ? message.content : "",
       role: typeof message?.role === "string" ? message.role.toUpperCase() : "UNKNOWN",
       tokenCountLabel: `${config.formatAdminChatTokenCount(
-        countTextTokens(typeof message?.content === "string" ? message.content : "")
+        Number.isFinite(Number(message?.tokenCount))
+          ? Math.max(0, Math.floor(Number(message.tokenCount)))
+          : countTextTokens(typeof message?.content === "string" ? message.content : "")
       )} tokens`
     }));
   },
@@ -861,10 +940,12 @@ const model = {
         ]);
 
         this.settings = {
-          ...config.settings
+          ...config.settings,
+          promptBudgetRatios: clonePromptBudgetRatios(config.settings?.promptBudgetRatios)
         };
         this.settingsDraft = {
-          ...this.settings
+          ...this.settings,
+          promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
         };
         this.systemPrompt = config.systemPrompt;
         this.systemPromptDraft = config.systemPrompt;
@@ -991,6 +1072,13 @@ const model = {
     return Array.isArray(transientSections) ? transientSections : [];
   },
 
+  getPromptBuildOptions() {
+    return {
+      maxTokens: this.getConfiguredMaxTokens(),
+      promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
+    };
+  },
+
   applyPromptInput(promptInput) {
     const normalizedPromptInput = promptInput && typeof promptInput === "object" ? promptInput : null;
 
@@ -1004,6 +1092,15 @@ const model = {
       : [];
     this.promptHistoryText = formatPromptHistoryText(this.promptHistoryMessages);
     this.historyTokenCount = countTextTokens(this.promptHistoryText);
+
+    if (typeof this.chatRuntime?.__setPromptItems === "function") {
+      this.chatRuntime.__setPromptItems(
+        Array.isArray(normalizedPromptInput?.promptItems)
+          ? normalizedPromptInput.promptItems.map((item) => ({ ...item }))
+          : []
+      );
+    }
+
     return normalizedPromptInput;
   },
 
@@ -1012,6 +1109,7 @@ const model = {
     const promptInput = await this.ensurePromptRuntime().build({
       defaultSystemPrompt: this.defaultSystemPrompt,
       historyMessages: history,
+      options: this.getPromptBuildOptions(),
       systemPrompt: this.systemPrompt,
       transientSections: this.getPromptTransientSections()
     });
@@ -1023,6 +1121,7 @@ const model = {
   async refreshPromptInputFromHistory(history = this.history) {
     const promptInput = await this.ensurePromptRuntime().updateHistory(history, {
       defaultSystemPrompt: this.defaultSystemPrompt,
+      options: this.getPromptBuildOptions(),
       systemPrompt: this.systemPrompt,
       transientSections: this.getPromptTransientSections()
     });
@@ -1035,6 +1134,7 @@ const model = {
     const promptInput = await prompt.buildAdminPromptInput({
       defaultSystemPrompt: this.defaultSystemPrompt,
       historyMessages: history,
+      options: this.getPromptBuildOptions(),
       promptInstance: this.ensurePromptRuntime(),
       systemPrompt: this.systemPrompt,
       transientSections: this.getPromptTransientSections()
@@ -1081,6 +1181,7 @@ const model = {
       this.promptHistoryText = this.historyText;
       this.promptHistoryMessages = [];
       this.historyTokenCount = countTextTokens(this.promptHistoryText);
+      this.chatRuntime?.__clearPromptItems?.();
       return null;
     }
 
@@ -1533,7 +1634,8 @@ const model = {
 
   openSettingsDialog() {
     this.settingsDraft = {
-      ...this.settings
+      ...this.settings,
+      promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
     };
     this.syncHuggingFaceFromManager();
     this.prefillSettingsDraftDefaultHuggingFaceModel();
@@ -1565,6 +1667,36 @@ const model = {
         this.reportError("warming the local-provider settings draft", error);
       });
     }
+  },
+
+  setSettingsPromptBudgetRatio(key, value) {
+    const normalizedRatios = rebalancePromptBudgetRatios(
+      this.settingsDraft.promptBudgetRatios,
+      key,
+      value
+    );
+
+    this.settingsDraft = {
+      ...this.settingsDraft,
+      promptBudgetRatios: {
+        ...normalizedRatios,
+        singleMessage: normalizePromptBudgetSingleMessageRatio(
+          this.settingsDraft?.promptBudgetRatios?.singleMessage
+        )
+      }
+    };
+  },
+
+  setSettingsSingleMessagePromptBudgetRatio(value) {
+    const normalizedRatios = clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios);
+
+    this.settingsDraft = {
+      ...this.settingsDraft,
+      promptBudgetRatios: {
+        ...normalizedRatios,
+        singleMessage: normalizePromptBudgetSingleMessageRatio(value)
+      }
+    };
   },
 
   handleSettingsHuggingFaceModelInput(value = "") {
@@ -1671,6 +1803,7 @@ const model = {
 
     this.settingsDraft = {
       ...config.DEFAULT_ADMIN_CHAT_SETTINGS,
+      promptBudgetRatios: { ...config.DEFAULT_ADMIN_CHAT_SETTINGS.promptBudgetRatios },
       apiKey: preservedApiKey
     };
     this.status = "LLM settings draft reset to defaults except API key.";
@@ -1750,6 +1883,7 @@ const model = {
       maxTokens,
       model: (this.settingsDraft.model || "").trim(),
       paramsText,
+      promptBudgetRatios: clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios),
       provider,
       storedApiKeyLocked: this.settings.storedApiKeyLocked === true,
       storedApiKeyValue: String(this.settings.storedApiKeyValue || "")
@@ -2045,7 +2179,22 @@ const model = {
     }
   },
 
-  async executeAssistantBlocks(assistantContent) {
+  async executeAssistantBlocks(assistantInput, options = {}) {
+    const assistantMessage = assistantInput && typeof assistantInput === "object" ? assistantInput : null;
+    const assistantContent = typeof assistantInput === "string"
+      ? assistantInput
+      : typeof assistantMessage?.content === "string"
+        ? assistantMessage.content
+        : "";
+    const assistantEvaluation = options.evaluateAssistantMessage === false
+      ? null
+      : await evaluateAdminAssistantMessage({
+          assistantContent,
+          history: this.history,
+          logs: [],
+          messageId: typeof assistantMessage?.id === "string" ? assistantMessage.id : "",
+          store: this
+        });
     const executionResults = await this.executionContext.executeFromContent(assistantContent, {
       onBeforeBlock: async ({ index, total }) => {
         if (!total) {
@@ -2061,6 +2210,7 @@ const model = {
       return null;
     }
 
+    prependAssistantEvaluationLogs(executionResults, assistantEvaluation?.logs);
     return executionResults;
   },
 
@@ -2204,7 +2354,7 @@ const model = {
       }
 
       emptyAssistantRetryCount = 0;
-      const executionResults = await this.executeAssistantBlocks(assistantMessage.content);
+      const executionResults = await this.executeAssistantBlocks(assistantMessage);
 
       if (!executionResults || !executionResults.length) {
         return "complete";
@@ -2403,7 +2553,9 @@ const model = {
     this.rerunningMessageId = messageId;
 
     try {
-      const executionResults = await this.executeAssistantBlocks(section.message.content);
+      const executionResults = await this.executeAssistantBlocks(section.message, {
+        evaluateAssistantMessage: false
+      });
 
       if (!executionResults || !executionResults.length) {
         this.status = "No execution code found to rerun.";

@@ -5,7 +5,7 @@
   --space-chrome-border-strong: rgba(168, 186, 219, 0.24);
   --space-chrome-hover-bg: #142238;
   --space-chrome-active-bg: #132033;
-  --space-chrome-panel-shadow: 0 24px 60px rgba(1, 5, 14, 0.42);
+  --space-chrome-panel-shadow: none;
   --space-chrome-focus-ring: rgba(148, 188, 255, 0.26);
 }
 

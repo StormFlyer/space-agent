@@ -9,16 +9,12 @@
   const BRIDGE_DESKTOP_TRANSPORT_KEY = "__spaceBrowserEmbedTransport__";
   const BRIDGE_GLOBAL_KEY = "__spaceBrowserFrameInjectBridge__";
   const BRIDGE_META_KEY = "__spaceBrowserFrameInjectMeta__";
-  const BRIDGE_DOM_FLAG = "__spaceBrowserFrameInjectDomReady__";
-  const BRIDGE_NAVIGATION_FLAG = "__spaceBrowserFrameInjectNavigationReady__";
+  const BRIDGE_RUNTIME_KEY = "__spaceBrowserFrameInjectRuntime__";
   const BRIDGE_NAVIGATION_EVENTS_FLAG = "__spaceBrowserFrameInjectNavigationEventsReady__";
   const BRIDGE_OPEN_WINDOW_FLAG = "__spaceBrowserFrameInjectOpenWindowReady__";
-  const BRIDGE_CONTENT_FLAG = "__spaceBrowserFrameInjectContentReady__";
-  const BRIDGE_DETAIL_FLAG = "__spaceBrowserFrameInjectDetailReady__";
-  const BRIDGE_INTERACTION_FLAG = "__spaceBrowserFrameInjectInteractionReady__";
-  const BRIDGE_PING_FLAG = "__spaceBrowserFrameInjectPingReady__";
   const HISTORY_PATCH_FLAG = "__spaceBrowserFrameInjectHistoryPatchReady__";
   const PAGE_CONTENT_HELPER_KEY = "__spaceBrowserPageContent__";
+  const DOM_HELPER_KEY = "__spaceBrowserDomHelper__";
 
   function isPlainObject(value) {
     if (!value || Object.prototype.toString.call(value) !== "[object Object]") {
@@ -221,6 +217,16 @@
     };
   }
 
+  function serializeErrorSummary(error, fallbackMessage = "Browser frame bridge request failed.") {
+    const serialized = serializeError(error, fallbackMessage);
+    return {
+      code: serialized.code ?? null,
+      details: normalizePayload(serialized.details || {}),
+      message: serialized.message || String(fallbackMessage || "Browser frame bridge request failed."),
+      name: serialized.name || "Error"
+    };
+  }
+
   function createRemoteBridgeError(message) {
     const payload = isPlainObject(message.payload)
       ? message.payload
@@ -275,21 +281,55 @@
 
   function resolveDesktopTransport() {
     const transport = globalThis[BRIDGE_DESKTOP_TRANSPORT_KEY];
-    if (
-      !transport
-      || typeof transport.bindReceiver !== "function"
-      || typeof transport.sendEnvelope !== "function"
-    ) {
+    if (!transport) {
       return null;
     }
 
+    const receiveEventName = typeof transport.receiveEventName === "string" && transport.receiveEventName.trim()
+      ? transport.receiveEventName.trim()
+      : typeof transport.eventName === "string" && transport.eventName.trim()
+      ? transport.eventName.trim()
+      : "";
+    const sendEventName = typeof transport.sendEventName === "string" && transport.sendEventName.trim()
+      ? transport.sendEventName.trim()
+      : "";
+
     return {
       postEnvelope(envelope) {
-        transport.sendEnvelope(envelope);
-        return envelope;
+        if (sendEventName) {
+          globalThis.dispatchEvent(new CustomEvent(sendEventName, {
+            detail: envelope
+          }));
+          return envelope;
+        }
+
+        if (typeof transport.sendEnvelope === "function") {
+          transport.sendEnvelope(envelope);
+          return envelope;
+        }
+
+        throw new Error("Browser frame desktop transport cannot post outbound envelopes.");
       },
 
       subscribe(listener) {
+        if (receiveEventName) {
+          const handleDesktopEnvelope = (event) => {
+            listener(event?.detail, {
+              origin: "electron://desktop",
+              source: "desktop"
+            });
+          };
+
+          globalThis.addEventListener(receiveEventName, handleDesktopEnvelope);
+          return () => {
+            globalThis.removeEventListener(receiveEventName, handleDesktopEnvelope);
+          };
+        }
+
+        if (typeof transport.bindReceiver !== "function") {
+          throw new Error("Browser frame desktop transport cannot subscribe to inbound envelopes.");
+        }
+
         return transport.bindReceiver((envelope) => {
           listener(envelope, {
             origin: "electron://desktop",
@@ -359,7 +399,55 @@
       .filter(Boolean);
   }
 
-  function serializeDocumentHtml() {
+  function getDomHelper() {
+    const helper = globalThis[DOM_HELPER_KEY];
+    if (helper?.captureDocument) {
+      return helper;
+    }
+
+    return null;
+  }
+
+  async function captureDomHelperDocument() {
+    const helper = getDomHelper();
+    if (!helper) {
+      return null;
+    }
+
+    try {
+      const snapshot = await helper.captureDocument();
+      const html = String(snapshot?.html || "").trim();
+      if (!html) {
+        return null;
+      }
+
+      return {
+        html,
+        snapshot
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function parseHtmlDocument(html) {
+    if (typeof globalThis.DOMParser !== "function") {
+      return null;
+    }
+
+    try {
+      return new globalThis.DOMParser().parseFromString(String(html || ""), "text/html");
+    } catch {
+      return null;
+    }
+  }
+
+  async function serializeDocumentHtml() {
+    const helperDocument = await captureDomHelperDocument();
+    if (helperDocument?.html) {
+      return helperDocument.html;
+    }
+
     if (typeof globalThis.XMLSerializer === "function" && globalThis.document) {
       try {
         return new globalThis.XMLSerializer().serializeToString(globalThis.document);
@@ -371,7 +459,32 @@
     return String(globalThis.document?.documentElement?.outerHTML || "");
   }
 
-  function serializeSelectorHtml(selector) {
+  async function serializeSelectorHtml(selector) {
+    const helperDocument = await captureDomHelperDocument();
+    if (helperDocument?.html) {
+      const parsedDocument = parseHtmlDocument(helperDocument.html);
+      if (parsedDocument?.querySelectorAll) {
+        let parsedElements = [];
+        try {
+          parsedElements = [...parsedDocument.querySelectorAll(selector)];
+        } catch (error) {
+          throw createNamedError(
+            "BrowserFrameBridgeSelectorError",
+            `Browser frame bridge could not resolve selector \"${selector}\".`,
+            {
+              details: {
+                selector
+              }
+            }
+          );
+        }
+
+        return parsedElements
+          .map((element) => String(element?.outerHTML || ""))
+          .join("\n");
+      }
+    }
+
     let elements = [];
     try {
       elements = [...(globalThis.document?.querySelectorAll?.(selector) || [])];
@@ -392,18 +505,18 @@
       .join("\n");
   }
 
-  function collectDomSnapshot(payload = null) {
+  async function collectDomSnapshot(payload = null) {
     const selectors = normalizeSelectorList(payload);
     if (!selectors.length) {
       return {
-        document: serializeDocumentHtml()
+        document: await serializeDocumentHtml()
       };
     }
 
     const snapshot = {};
-    selectors.forEach((selector) => {
-      snapshot[selector] = serializeSelectorHtml(selector);
-    });
+    for (const selector of selectors) {
+      snapshot[selector] = await serializeSelectorHtml(selector);
+    }
     return snapshot;
   }
 
@@ -442,7 +555,7 @@
     };
   }
 
-  function invokePageContentHelper(methodName, args, errorName, errorMessage, errorCode) {
+  async function invokePageContentHelper(methodName, args, errorName, errorMessage, errorCode) {
     const helper = getPageContentHelper();
     const method = helper?.[methodName];
 
@@ -460,7 +573,7 @@
     }
 
     try {
-      return method(...args);
+      return await method(...args);
     } catch (error) {
       throw createNamedError(
         errorName,
@@ -469,14 +582,15 @@
           code: errorCode,
           cause: error,
           details: {
-            action: methodName
+            action: methodName,
+            cause: serializeErrorSummary(error, errorMessage)
           }
         }
       );
     }
   }
 
-  function collectSemanticContent(payload = null) {
+  async function collectSemanticContent(payload = null) {
     return invokePageContentHelper(
       "capture",
       [payload],
@@ -486,7 +600,7 @@
     );
   }
 
-  function collectReferenceDetail(payload = null) {
+  async function collectReferenceDetail(payload = null) {
     return invokePageContentHelper(
       "detail",
       [payload],
@@ -496,7 +610,7 @@
     );
   }
 
-  function clickReference(payload = null) {
+  async function clickReference(payload = null) {
     return invokePageContentHelper(
       "click",
       [resolveReferencePayload(payload)],
@@ -506,7 +620,7 @@
     );
   }
 
-  function typeReference(payload = null) {
+  async function typeReference(payload = null) {
     const typedPayload = resolveTypedReferencePayload(payload);
 
     return invokePageContentHelper(
@@ -518,7 +632,7 @@
     );
   }
 
-  function submitReference(payload = null) {
+  async function submitReference(payload = null) {
     return invokePageContentHelper(
       "submit",
       [resolveReferencePayload(payload)],
@@ -528,7 +642,7 @@
     );
   }
 
-  function typeSubmitReference(payload = null) {
+  async function typeSubmitReference(payload = null) {
     const typedPayload = resolveTypedReferencePayload(payload);
 
     return invokePageContentHelper(
@@ -540,7 +654,7 @@
     );
   }
 
-  function scrollReference(payload = null) {
+  async function scrollReference(payload = null) {
     return invokePageContentHelper(
       "scroll",
       [resolveReferencePayload(payload)],
@@ -632,6 +746,21 @@
         : "";
     const normalizedTarget = String(rawTarget || "").trim();
 
+    const looksLikeLocalHost = (value) => {
+      const host = String(value || "").trim().split(/[/?#]/u, 1)[0] || "";
+      return /^(?:localhost|\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?$/iu.test(host);
+    };
+
+    const looksLikeTypedHost = (value) => {
+      const trimmedValue = String(value || "").trim();
+      if (!trimmedValue || /\s/u.test(trimmedValue)) {
+        return false;
+      }
+
+      const host = trimmedValue.split(/[/?#]/u, 1)[0] || "";
+      return /^(?:localhost|\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z\d-]{2,63})(?::\d+)?$/iu.test(host);
+    };
+
     if (!normalizedTarget) {
       throw createNamedError(
         "BrowserFrameBridgeNavigationError",
@@ -640,6 +769,16 @@
     }
 
     try {
+      if (
+        !/^[a-z][a-z\d+\-.]*:\/\//iu.test(normalizedTarget)
+        && !/^(about|blob|data|file|mailto|tel):/iu.test(normalizedTarget)
+        && !/^[/?#.]/u.test(normalizedTarget)
+        && looksLikeTypedHost(normalizedTarget)
+      ) {
+        const protocol = looksLikeLocalHost(normalizedTarget) ? "http://" : "https://";
+        return new URL(`${protocol}${normalizedTarget}`, globalThis.location?.href || "http://localhost/").href;
+      }
+
       return new URL(normalizedTarget, globalThis.location?.href || "http://localhost/").href;
     } catch {
       throw createNamedError(
@@ -849,6 +988,10 @@
           requestId: message.requestId
         }));
       } catch (error) {
+        console.error(
+          `[space-browser/frame] Request handler failed for "${message.type}".`,
+          serializeError(error)
+        );
         postEnvelope(createEnvelope(BRIDGE_PHASE.RESPONSE, message.type, serializeError(error), {
           ok: false,
           requestId: message.requestId
@@ -1011,74 +1154,6 @@
     };
   }
 
-  function installPingHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_PING_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("ping", (payload) => `received:${String(payload ?? "")}`);
-    bridge[BRIDGE_PING_FLAG] = true;
-    return bridge;
-  }
-
-  function installDomHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_DOM_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("dom", (payload) => collectDomSnapshot(payload));
-    bridge[BRIDGE_DOM_FLAG] = true;
-    return bridge;
-  }
-
-  function installContentHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_CONTENT_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("content", (payload) => collectSemanticContent(payload));
-    bridge[BRIDGE_CONTENT_FLAG] = true;
-    return bridge;
-  }
-
-  function installDetailHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_DETAIL_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("detail", (payload) => collectReferenceDetail(payload));
-    bridge[BRIDGE_DETAIL_FLAG] = true;
-    return bridge;
-  }
-
-  function installInteractionHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_INTERACTION_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("click", (payload) => clickReference(payload));
-    bridge.handle("type", (payload) => typeReference(payload));
-    bridge.handle("submit", (payload) => submitReference(payload));
-    bridge.handle("type_submit", (payload) => typeSubmitReference(payload));
-    bridge.handle("scroll", (payload) => scrollReference(payload));
-    bridge[BRIDGE_INTERACTION_FLAG] = true;
-    return bridge;
-  }
-
-  function installNavigationHandler(bridge) {
-    if (!bridge || bridge[BRIDGE_NAVIGATION_FLAG]) {
-      return bridge;
-    }
-
-    bridge.handle("navigation_state_get", () => collectNavigationState());
-    bridge.handle("location_navigate", (payload) => scheduleNavigate(payload));
-    bridge.handle("history_back", () => scheduleHistoryAction("back"));
-    bridge.handle("history_forward", () => scheduleHistoryAction("forward"));
-    bridge.handle("location_reload", () => scheduleReload());
-    bridge[BRIDGE_NAVIGATION_FLAG] = true;
-    return bridge;
-  }
-
   function installNavigationEvents(bridge) {
     if (!bridge || bridge[BRIDGE_NAVIGATION_EVENTS_FLAG]) {
       return bridge;
@@ -1120,29 +1195,93 @@
     return bridge;
   }
 
+  function createInjectedRuntime(bridge) {
+    const messageHandlers = new Map();
+
+    const runtime = {
+      bridge,
+      clickReference,
+      collectDomSnapshot,
+      collectNavigationState,
+      collectReferenceDetail,
+      collectSemanticContent,
+      createNamedError,
+      installNavigationEvents() {
+        installNavigationEvents(bridge);
+        return runtime;
+      },
+      installOpenWindowHooks() {
+        installOpenWindowHooks(bridge);
+        return runtime;
+      },
+      async handleMessage(message) {
+        const normalizedType = normalizeType(message?.type);
+        const handler = messageHandlers.get(normalizedType);
+        if (typeof handler !== "function") {
+          throw createNamedError(
+            "BrowserFrameBridgeMissingHandlerError",
+            `No browser frame bridge handler is registered for "${normalizedType}".`,
+            {
+              code: "browser_frame_missing_handler",
+              details: {
+                type: normalizedType
+              }
+            }
+          );
+        }
+
+        return handler(message?.payload, message, runtime);
+      },
+      registerMessageHandler(type, handler) {
+        if (typeof handler !== "function") {
+          throw new Error("Browser frame runtime handlers must be functions.");
+        }
+
+        const normalizedType = normalizeType(type);
+        messageHandlers.set(normalizedType, handler);
+        const offBridge = bridge.handle(normalizedType, (payload, message) => runtime.handleMessage({
+          ...message,
+          payload,
+          type: normalizedType
+        }));
+
+        return () => {
+          if (messageHandlers.get(normalizedType) === handler) {
+            messageHandlers.delete(normalizedType);
+          }
+          offBridge?.();
+        };
+      },
+      scheduleHistoryAction,
+      scheduleNavigate,
+      scheduleReload,
+      scrollReference,
+      sendEvent(type, payload = null) {
+        return bridge.send(type, payload);
+      },
+      submitReference,
+      typeReference,
+      typeSubmitReference,
+      version: "1"
+    };
+
+    return runtime;
+  }
+
   const existingBridge = globalThis[BRIDGE_GLOBAL_KEY];
-  const bridge = installNavigationEvents(
-    installNavigationHandler(
-      installInteractionHandler(
-        installDetailHandler(
-          installContentHandler(
-            installDomHandler(
-              installPingHandler(
-                installOpenWindowHooks(existingBridge || createBridge())
-              )
-            )
-          )
-        )
-      )
-    )
-  );
+  const bridge = existingBridge || createBridge();
+  const existingRuntime = globalThis[BRIDGE_RUNTIME_KEY];
+  const runtime = existingRuntime?.bridge === bridge
+    ? existingRuntime
+    : createInjectedRuntime(bridge);
   const bootstrap = isPlainObject(globalThis[BRIDGE_BOOTSTRAP_KEY])
     ? globalThis[BRIDGE_BOOTSTRAP_KEY]
     : isPlainObject(globalThis.__spaceBrowserFrameInjectBootstrap__)
-      ? globalThis.__spaceBrowserFrameInjectBootstrap__
+    ? globalThis.__spaceBrowserFrameInjectBootstrap__
     : {};
 
   globalThis[BRIDGE_GLOBAL_KEY] = bridge;
+  globalThis[BRIDGE_RUNTIME_KEY] = runtime;
   globalThis[BRIDGE_META_KEY] = {
     browserId: typeof bootstrap.browserId === "string" ? bootstrap.browserId : "",
     iframeId: typeof bootstrap.iframeId === "string" ? bootstrap.iframeId : "",
@@ -1150,4 +1289,23 @@
     scriptPath: typeof bootstrap.scriptPath === "string" ? bootstrap.scriptPath : "",
     scriptUrl: typeof bootstrap.scriptUrl === "string" ? bootstrap.scriptUrl : ""
   };
+
+  console.info("[space-browser/frame] Bridge runtime ready.", {
+    browserId: globalThis[BRIDGE_META_KEY].browserId,
+    iframeId: globalThis[BRIDGE_META_KEY].iframeId,
+    location: String(globalThis.location?.href || ""),
+    scriptUrl: globalThis[BRIDGE_META_KEY].scriptUrl,
+    transport: globalThis[BRIDGE_DESKTOP_TRANSPORT_KEY] ? "desktop" : "window"
+  });
+
+  try {
+    bridge.send("__bridge_ready__", {
+      browserId: globalThis[BRIDGE_META_KEY].browserId,
+      iframeId: globalThis[BRIDGE_META_KEY].iframeId,
+      location: String(globalThis.location?.href || ""),
+      transport: globalThis[BRIDGE_DESKTOP_TRANSPORT_KEY] ? "desktop" : "window"
+    });
+  } catch (error) {
+    console.error("[space-browser/frame] Failed to emit bridge-ready event.", error);
+  }
 })();

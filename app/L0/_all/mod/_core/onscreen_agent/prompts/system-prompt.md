@@ -281,15 +281,11 @@ return await space.skills.load("browser-control")
 
 Opening Google in a browser window now...
 _____javascript
-const browser = space.browser.open("https://www.google.com")
-await browser.sync()
-return browser.state
+return await space.browser.open("https://www.google.com")
 
 Using the already loaded browser skill now...
 _____javascript
-const loadedBrowser = space.browser.open("https://www.google.com")
-await loadedBrowser.sync()
-return loadedBrowser.state
+return await space.browser.open("https://www.google.com")
 
 Loading the snake widget source now...
 _____javascript

@@ -19,6 +19,18 @@
       :root {
         color-scheme: dark;
         font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+        --color-canvas: #050816;
+        --color-canvas-elevated: #09111f;
+        --color-canvas-deep: #02050d;
+        --color-text-primary: #f3f7ff;
+        --color-backdrop-glow-primary: rgba(148, 188, 255, 0.18);
+        --color-backdrop-glow-secondary: rgba(121, 237, 216, 0.14);
+        --color-backdrop-glow-depth: rgba(59, 95, 172, 0.26);
+        --color-backdrop-star-strong: rgba(255, 255, 255, 0.76);
+        --color-backdrop-star-soft: rgba(255, 255, 255, 0.26);
+        --color-backdrop-star-accent: rgba(148, 188, 255, 0.48);
+        --color-backdrop-star-halo: rgba(255, 255, 255, 0.12);
+        --color-backdrop-star-halo-accent: rgba(148, 188, 255, 0.16);
         --share-bg: rgba(9, 17, 31, 0.84);
         --share-border: rgba(148, 167, 201, 0.18);
         --share-text: #f3f7ff;
@@ -32,14 +44,33 @@
         box-sizing: border-box;
       }
 
-      body {
+      [hidden] {
+        display: none !important;
+      }
+
+      body.space-theme-canvas :where(*, *::before, *::after) {
+        box-shadow: none !important;
+        text-shadow: none !important;
+      }
+
+      body.space-theme-canvas :focus-visible {
+        outline: 2px solid rgba(148, 188, 255, 0.55) !important;
+        outline-offset: 2px;
+      }
+
+      html {
+        min-height: 100%;
+      }
+
+      body.space-theme-canvas {
         min-height: 100vh;
         margin: 0;
         display: grid;
         place-items: center;
         padding: 1.25rem;
-        background: #050816;
-        color: var(--share-text);
+        color: var(--color-text-primary);
+        overflow-x: hidden;
+        overflow-y: auto;
       }
 
       .share-shell {
@@ -140,12 +171,6 @@
         line-height: 1.05;
       }
 
-      .share-preview-note {
-        margin: 0;
-        color: var(--share-text-muted);
-        line-height: 1.5;
-      }
-
       .share-pill-row {
         display: flex;
         flex-wrap: wrap;
@@ -233,7 +258,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="space-theme-canvas">
     <div class="space-backdrop" data-space-backdrop aria-hidden="true">
       <div class="space-backdrop-layer space-backdrop-glow"></div>
       <div class="space-backdrop-layer space-backdrop-stars space-backdrop-stars-deep"></div>
@@ -249,7 +274,7 @@
 
     <main class="share-shell">
       <h1>Shared Space</h1>
-      <p class="share-copy">The link opens a temporary guest space so the shared code never runs inside your own user folder. Review the shared space, then open it when you are ready.</p>
+      <p class="share-copy">Shared spaces open in sandboxed environment, not your account.</p>
 
       <section id="share-preview" class="share-preview" hidden>
         <div class="share-preview-media" aria-hidden="true">
@@ -262,7 +287,6 @@
         <div class="share-preview-body">
           <p class="share-preview-eyebrow">Shared Space Preview</p>
           <h2 id="share-preview-title" class="share-preview-title">Untitled</h2>
-          <p class="share-preview-note">Opens inside a fresh guest account.</p>
           <div id="share-preview-pills" class="share-pill-row" aria-label="Shared space widgets"></div>
         </div>
       </section>
@@ -272,12 +296,12 @@
           <span>Password</span>
           <input id="share-password-input" class="share-password-input" type="password" autocomplete="current-password" />
         </label>
-        <button id="share-password-submit" class="share-password-submit" type="submit">Unlock Preview</button>
+        <button id="share-password-submit" class="share-password-submit" type="submit">Show Shared Space</button>
       </form>
 
       <button id="share-open-button" class="share-password-submit share-open-button" type="button" hidden>Open Shared Space</button>
 
-      <p id="share-status" class="share-status" role="status" aria-live="polite">Preparing shared space...</p>
+      <p id="share-status" class="share-status" role="status" aria-live="polite" hidden></p>
     </main>
 
     <script src="/pages/res/space-backdrop.js"></script>

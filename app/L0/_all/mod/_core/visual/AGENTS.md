@@ -45,16 +45,17 @@ Icons:
 - `icons/icon-color-selector-modal.html`, `icons/icon-color-selector.css`, and `icons/icon-color-selector.js` own the reusable icon-selection modal and register `space.visual.openIconColorSelector(options)` once that module is imported
 - `space.visual.openIconColorSelector(options)` should open through the framework modal shell, await close, and resolve with either `null` for cancel or an `{ icon, color }` selection payload
 - the shared selector should support search, pagination, icon color, reset-to-default values supplied by the caller, and optional `allowNone` behavior without embedding feature-specific storage rules into the visual layer; its default page size is `100` icons unless a caller overrides `pageSize`
-- selector option cells should keep wrapped two-line icon labels legible without clipping descenders, use a larger direct glyph instead of a nested inner chip, keep prev/next as compact icon-only controls beside the pagination label, and leave a small visual gap above the footer action row
+- selector option cells should keep wrapped two-line icon labels legible without clipping descenders, use a larger direct glyph instead of a nested inner chip, keep prev/next as compact icon-only controls beside the pagination label, leave a small visual gap above the footer action row, and keep hover, focus, and selected-state feedback hitbox-stable instead of translating the option cell
 
 Actions and forms:
 
 - `actions/buttons.css` owns shared `primary-button`, `secondary-button`, and `confirm-button` treatments plus composer-attachment chip styling
 - `forms/dialog.css` plus `forms/dialog.js` own the shared native `<dialog>` presentation and open or close helpers
+- `forms/dialog.css` also owns reusable prompt-budget field styling for dialog-based model settings, including the segmented preview bar plus the multi-slider control grid used by the first-party agent surfaces
 - authenticated app feature dialogs are standardized on feature-owned native `<dialog class="chat-dialog">` markup that lives in the owning feature HTML, opens through `forms/dialog.js`, and composes `dialog-card` or `dialog-card-shell` content wrappers from `forms/dialog.css`
 - `forms/dialog.css` also owns the reusable fixed-chrome dialog shell classes for long modals: `dialog-card-shell` keeps the header and footer static, `dialog-scroll-body` and `dialog-scroll-frame` own the interior scrolling region, and `dialog-actions-split` plus `dialog-actions-group` and `dialog-action-button-fixed` cover compact split footer rows without feature-local inline layout
 - the framework modal shell in `_core/framework/js/modals.js` is reserved for generic separately loaded modal documents or shared utilities such as icon selectors that genuinely need that wrapper; it is not the default chrome path for first-party feature dialogs
-- modal-scoped button chrome belongs in `forms/dialog.css`, not in feature-local styles: dialogs should use the tighter admin-style geometry with compact 10px radii, no oversized pill buttons, transparent secondary actions, and flatter primary or confirm actions without the large shared button shadows
+- modal-scoped button chrome belongs in `forms/dialog.css`, not in feature-local styles: dialogs should use the tighter admin-style geometry with compact 10px radii, no oversized pill buttons, transparent secondary actions, and flatter primary or confirm actions without any painted shadow treatment
 
 Resources:
 
@@ -77,6 +78,8 @@ Conversation and surfaces:
 
 - solve shared presentation problems here before cloning styles into feature modules
 - keep the overall direction calm, dark, and readable rather than loud or novelty-driven
+- keep shared interactive hover and focus emphasis hitbox-stable: prefer border, background, outline, or opacity changes over translate or position shifts that move the clickable box
+- first-party glass surfaces in this module stay shadowless: do not use box-shadow, text-shadow, or drop-shadow for depth; rely on blur, borders, gradients, and contrast instead
 - avoid putting feature logic, API calls, or store state into this module
 - when a feature needs a dialog, default to the shared native `<dialog class="chat-dialog">` pattern documented here; only update the visual system itself when that pattern must change for everyone
 - when a modal needs persistent action rows, scroll the inner body or framed content area through the shared dialog shell helpers instead of putting overflow on the full dialog card

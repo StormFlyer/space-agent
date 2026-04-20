@@ -3,7 +3,8 @@ import * as config from "/mod/_core/admin/views/agent/config.js";
 function createDefaultConfig() {
   return {
     settings: {
-      ...config.DEFAULT_ADMIN_CHAT_SETTINGS
+      ...config.DEFAULT_ADMIN_CHAT_SETTINGS,
+      promptBudgetRatios: { ...config.DEFAULT_ADMIN_CHAT_SETTINGS.promptBudgetRatios }
     },
     systemPrompt: ""
   };
@@ -43,6 +44,34 @@ function isMissingFileError(error) {
 
 function isSingleUserAppRuntime(runtime) {
   return Boolean(runtime?.config?.get?.("SINGLE_USER_APP", false));
+}
+
+function normalizeStoredPromptBudgetRatios(storedConfig = {}) {
+  const storedRatios =
+    storedConfig.prompt_budget_ratios ||
+    storedConfig.promptBudgetRatios ||
+    {};
+  const source = storedRatios && typeof storedRatios === "object" ? storedRatios : {};
+
+  return config.normalizeAdminChatPromptBudgetRatios({
+    history:
+      source.history ??
+      storedConfig.history_prompt_max_ratio ??
+      storedConfig.historyPromptMaxRatio,
+    singleMessage:
+      source.single_message ??
+      source.singleMessage ??
+      storedConfig.single_message_max_ratio ??
+      storedConfig.singleMessageMaxRatio,
+    system:
+      source.system ??
+      storedConfig.system_prompt_max_ratio ??
+      storedConfig.systemPromptMaxRatio,
+    transient:
+      source.transient ??
+      storedConfig.transient_prompt_max_ratio ??
+      storedConfig.transientPromptMaxRatio
+  });
 }
 
 async function decodeStoredApiKey(runtime, storedValue) {
@@ -124,6 +153,7 @@ async function normalizeStoredConfig(runtime, parsedConfig) {
       maxTokens: config.normalizeAdminChatMaxTokens(storedMaxTokens),
       model: String(storedConfig.model || config.DEFAULT_ADMIN_CHAT_SETTINGS.model || "").trim(),
       paramsText: String(storedConfig.params || storedConfig.paramsText || config.DEFAULT_ADMIN_CHAT_SETTINGS.paramsText || "").trim(),
+      promptBudgetRatios: normalizeStoredPromptBudgetRatios(storedConfig),
       provider,
       storedApiKeyLocked: storedApiKey.locked,
       storedApiKeyValue: storedApiKey.storedValue
@@ -149,7 +179,13 @@ async function buildStoredConfigPayload(runtime, { settings, systemPrompt }) {
     llm_provider: config.normalizeAdminChatLlmProvider(settings?.provider),
     max_tokens: config.normalizeAdminChatMaxTokens(settings?.maxTokens),
     model: String(settings?.model || config.DEFAULT_ADMIN_CHAT_SETTINGS.model || "").trim(),
-    params: String(settings?.paramsText || config.DEFAULT_ADMIN_CHAT_SETTINGS.paramsText || "").trim()
+    params: String(settings?.paramsText || config.DEFAULT_ADMIN_CHAT_SETTINGS.paramsText || "").trim(),
+    prompt_budget_ratios: {
+      history: config.normalizeAdminChatPromptBudgetRatios(settings?.promptBudgetRatios).history,
+      single_message: config.normalizeAdminChatPromptBudgetRatios(settings?.promptBudgetRatios).singleMessage,
+      system: config.normalizeAdminChatPromptBudgetRatios(settings?.promptBudgetRatios).system,
+      transient: config.normalizeAdminChatPromptBudgetRatios(settings?.promptBudgetRatios).transient
+    }
   };
 
   if (normalizedSystemPrompt) {

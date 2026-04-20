@@ -33,12 +33,13 @@ Public auth and health endpoints:
 
 Current rules:
 
-- these are the password-login and health anonymous endpoints; hosted-share endpoints are the other explicit anonymous family
-- login uses the shared auth service challenge and proof flow unless runtime config disables password login through `LOGIN_ALLOWED=false`
+- these are the password-login, guest-bootstrap, session-check, and health anonymous endpoints; hosted-share endpoints are the other explicit anonymous family
+- normal password login uses the shared auth service challenge and proof flow unless runtime config disables that entry path through `LOGIN_ALLOWED=false`
 - `login_challenge` also reports `userCrypto` bootstrap state; when a legacy account has no `meta/user_crypto.json`, the challenge includes a one-time provisioning share so the browser can generate the missing wrapped record before final login
 - successful login sets the `space_session` cookie through the auth service, writes the durable session verifier into `L2/<username>/meta/logins.json`, and returns a backend `sessionId` plus the `userCrypto` unlock payload for the authenticated browser session
 - if a legacy account cannot finish `userCrypto` provisioning during login, the server must fail the login instead of issuing the cookie and then forcing a logout
-- `guest_create` creates an `L2` guest user only when runtime config allows guest accounts and password login remains enabled, and must publish the concrete new auth files through the shared mutation path so `user_index` sees the account immediately
+- `guest_create` creates an `L2` guest user whenever runtime config allows guest accounts, even when `LOGIN_ALLOWED=false`, and must publish the concrete new auth files through the shared mutation path so `user_index` sees the account immediately
+- when `LOGIN_ALLOWED=false`, `login_challenge` still allows guest usernames when guest users are enabled, `login` still finalizes already-issued challenges, and `login_check` stays available so public guest-bootstrap or share flows can confirm that the new session is ready before they navigate
 - in clustered runtime, login challenges are stored in the primary-only `login_challenge` state area while workers still validate cookies from replicated auth index shards
 
 App-file endpoints:

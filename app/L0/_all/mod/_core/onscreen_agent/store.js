@@ -1,5 +1,9 @@
 import * as config from "/mod/_core/onscreen_agent/config.js";
 import * as agentApi from "/mod/_core/onscreen_agent/api.js";
+import {
+  installPromptItemAccess,
+  rebalancePromptBudgetRatios
+} from "/mod/_core/agent_prompt/prompt-items.js";
 import * as execution from "/mod/_core/onscreen_agent/execution.js";
 import * as agentLlm from "/mod/_core/onscreen_agent/llm.js";
 import * as llmParams from "/mod/_core/onscreen_agent/llm-params.js";
@@ -7,6 +11,10 @@ import * as skills from "/mod/_core/onscreen_agent/skills.js";
 import * as storage from "/mod/_core/onscreen_agent/storage.js";
 import * as agentView from "/mod/_core/onscreen_agent/view.js";
 import { renderMarkdown } from "/mod/_core/framework/js/markdown-frontmatter.js";
+import {
+  normalizeAssistantEvaluationLogEntry,
+  prependAssistantEvaluationLogs
+} from "/mod/_core/agent-chat/assistant-message-evaluation.js";
 import { DEFAULT_MODEL_INPUT, DTYPE_OPTIONS, normalizeHuggingFaceModelInput } from "/mod/_core/huggingface/helpers.js";
 import { getHuggingFaceManager } from "/mod/_core/huggingface/manager.js";
 import { positionPopover } from "/mod/_core/visual/chrome/popover.js";
@@ -58,6 +66,50 @@ const HIDDEN_COMPOSER_STATUS_TEXTS = new Set([
   "Loading default system prompt..."
 ]);
 const huggingfaceManager = getHuggingFaceManager();
+
+function normalizePromptBudgetSingleMessageRatio(
+  value,
+  fallback = config.DEFAULT_ONSCREEN_AGENT_SETTINGS.promptBudgetRatios.singleMessage
+) {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsedValue)));
+}
+
+function clonePromptBudgetRatios(value = {}) {
+  return {
+    ...config.normalizeOnscreenAgentPromptBudgetRatios(value)
+  };
+}
+
+function createPromptBudgetSegments(ratios = {}) {
+  const normalizedRatios = clonePromptBudgetRatios(ratios);
+
+  return [
+    {
+      colorClass: "prompt-budget-segment-system",
+      key: "system",
+      label: "System",
+      value: normalizedRatios.system
+    },
+    {
+      colorClass: "prompt-budget-segment-history",
+      key: "history",
+      label: "History",
+      value: normalizedRatios.history
+    },
+    {
+      colorClass: "prompt-budget-segment-transient",
+      key: "transient",
+      label: "Transient",
+      value: normalizedRatios.transient
+    }
+  ];
+}
 
 function getRuntime() {
   const runtime = globalThis.space;
@@ -367,7 +419,7 @@ function ensureChatRuntime(targetRuntime) {
     targetRuntime.chat.transient = createTransientRuntime();
   }
 
-  return targetRuntime.chat;
+  return installPromptItemAccess(targetRuntime.chat);
 }
 
 function createMessage(role, content, options = {}) {
@@ -427,6 +479,21 @@ const processOnscreenAgentMessage = globalThis.space.extend(
   import.meta,
   async function processOnscreenAgentMessage(context = {}) {
     return context;
+  }
+);
+
+const evaluateOnscreenAssistantMessage = globalThis.space.extend(
+  import.meta,
+  async function evaluateOnscreenAssistantMessage(context = {}) {
+    return {
+      assistantContent: typeof context?.assistantContent === "string" ? context.assistantContent : "",
+      history: Array.isArray(context?.history) ? context.history : [],
+      logs: Array.isArray(context?.logs)
+        ? context.logs.map((entry) => normalizeAssistantEvaluationLogEntry(entry)).filter(Boolean)
+        : [],
+      messageId: typeof context?.messageId === "string" ? context.messageId : "",
+      store: context?.store || null
+    };
   }
 );
 
@@ -1346,6 +1413,7 @@ const model = {
     maxTokens: config.DEFAULT_ONSCREEN_AGENT_SETTINGS.maxTokens,
     model: "",
     paramsText: "",
+    promptBudgetRatios: { ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS.promptBudgetRatios },
     provider: config.DEFAULT_ONSCREEN_AGENT_SETTINGS.provider
   },
   settingsDraft: {
@@ -1357,6 +1425,7 @@ const model = {
     maxTokens: config.DEFAULT_ONSCREEN_AGENT_SETTINGS.maxTokens,
     model: "",
     paramsText: "",
+    promptBudgetRatios: { ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS.promptBudgetRatios },
     provider: config.DEFAULT_ONSCREEN_AGENT_SETTINGS.provider
   },
   status: "Loading onscreen agent...",
@@ -1729,6 +1798,14 @@ const model = {
     return `${config.formatOnscreenAgentTokenCount(this.historyTokenCount)} tokens`;
   },
 
+  get settingsDraftPromptBudgetRatios() {
+    return clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios);
+  },
+
+  get settingsDraftPromptBudgetSegments() {
+    return createPromptBudgetSegments(this.settingsDraft.promptBudgetRatios);
+  },
+
   get historyStyle() {
     const clampedHeight = this.getClampedHistoryHeight();
     const defaultAutoMaxHeight = this.getAvailableViewportHistoryHeight() ?? this.getDefaultHistoryAutoMaxHeight();
@@ -1885,6 +1962,9 @@ const model = {
     return this.promptHistoryMessages.map((message, index) => {
       const content = getPromptHistoryMessageContent(message);
       const entry = Array.isArray(this.promptHistoryEntries) ? this.promptHistoryEntries[index] : null;
+      const tokenCount = Number.isFinite(Number(message?.tokenCount))
+        ? Math.max(0, Math.floor(Number(message.tokenCount)))
+        : countTextTokens(content);
 
       return {
         content,
@@ -1893,7 +1973,7 @@ const model = {
         jsonContent: formatPromptHistoryMessageJson(message),
         messageIndex: index,
         role: formatPromptHistoryRoleLabel(message, entry),
-        tokenCountLabel: `${config.formatOnscreenAgentTokenCount(countTextTokens(content))} tokens`
+        tokenCountLabel: `${config.formatOnscreenAgentTokenCount(tokenCount)} tokens`
       };
     });
   },
@@ -2978,7 +3058,10 @@ const model = {
   },
 
   getPromptBuildOptions() {
-    return {};
+    return {
+      maxTokens: this.getConfiguredMaxTokens(),
+      promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
+    };
   },
 
   ensurePromptRuntime() {
@@ -3061,6 +3144,15 @@ const model = {
       ? normalizedPromptInput.requestMessages.map((message) => ({ ...message }))
       : [];
     this.historyTokenCount = countTextTokens(formatPromptHistoryText(this.promptHistoryMessages));
+
+    if (typeof this.chatRuntime?.__setPromptItems === "function") {
+      this.chatRuntime.__setPromptItems(
+        Array.isArray(normalizedPromptInput?.promptItems)
+          ? normalizedPromptInput.promptItems.map((item) => ({ ...item }))
+          : []
+      );
+    }
+
     return normalizedPromptInput;
   },
 
@@ -3209,10 +3301,12 @@ const model = {
         ]);
 
         this.settings = {
-          ...storedConfig.settings
+          ...storedConfig.settings,
+          promptBudgetRatios: clonePromptBudgetRatios(storedConfig.settings?.promptBudgetRatios)
         };
         this.settingsDraft = {
-          ...this.settings
+          ...this.settings,
+          promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
         };
         this.systemPrompt = storedConfig.systemPrompt;
         this.systemPromptDraft = storedConfig.systemPrompt;
@@ -4287,7 +4381,8 @@ const model = {
 
   openSettingsDialog() {
     this.settingsDraft = {
-      ...this.settings
+      ...this.settings,
+      promptBudgetRatios: clonePromptBudgetRatios(this.settings.promptBudgetRatios)
     };
     this.syncHuggingFaceFromManager();
     this.prefillSettingsDraftDefaultHuggingFaceModel();
@@ -4324,6 +4419,36 @@ const model = {
         });
       });
     }
+  },
+
+  setSettingsPromptBudgetRatio(key, value) {
+    const normalizedRatios = rebalancePromptBudgetRatios(
+      this.settingsDraft.promptBudgetRatios,
+      key,
+      value
+    );
+
+    this.settingsDraft = {
+      ...this.settingsDraft,
+      promptBudgetRatios: {
+        ...normalizedRatios,
+        singleMessage: normalizePromptBudgetSingleMessageRatio(
+          this.settingsDraft?.promptBudgetRatios?.singleMessage
+        )
+      }
+    };
+  },
+
+  setSettingsSingleMessagePromptBudgetRatio(value) {
+    const normalizedRatios = clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios);
+
+    this.settingsDraft = {
+      ...this.settingsDraft,
+      promptBudgetRatios: {
+        ...normalizedRatios,
+        singleMessage: normalizePromptBudgetSingleMessageRatio(value)
+      }
+    };
   },
 
   handleSettingsHuggingFaceModelInput(value = "") {
@@ -4430,6 +4555,7 @@ const model = {
 
     this.settingsDraft = {
       ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS,
+      promptBudgetRatios: { ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS.promptBudgetRatios },
       apiKey: preservedApiKey
     };
     this.status = "LLM settings draft reset to defaults except API key.";
@@ -4470,6 +4596,7 @@ const model = {
       maxTokens,
       model: (this.settingsDraft.model || "").trim(),
       paramsText,
+      promptBudgetRatios: clonePromptBudgetRatios(this.settingsDraft.promptBudgetRatios),
       provider,
       storedApiKeyLocked: this.settings.storedApiKeyLocked === true,
       storedApiKeyValue: String(this.settings.storedApiKeyValue || "")
@@ -5021,7 +5148,22 @@ const model = {
     }
   },
 
-  async executeAssistantBlocks(assistantContent) {
+  async executeAssistantBlocks(assistantInput, options = {}) {
+    const assistantMessage = assistantInput && typeof assistantInput === "object" ? assistantInput : null;
+    const assistantContent = typeof assistantInput === "string"
+      ? assistantInput
+      : typeof assistantMessage?.content === "string"
+        ? assistantMessage.content
+        : "";
+    const assistantEvaluation = options.evaluateAssistantMessage === false
+      ? null
+      : await evaluateOnscreenAssistantMessage({
+          assistantContent,
+          history: this.history,
+          logs: [],
+          messageId: typeof assistantMessage?.id === "string" ? assistantMessage.id : "",
+          store: this
+        });
     const executionResults = await this.executionContext.executeFromContent(assistantContent, {
       onBeforeBlock: async ({ code, index, total }) => {
         if (!total) {
@@ -5036,6 +5178,7 @@ const model = {
       return null;
     }
 
+    prependAssistantEvaluationLogs(executionResults, assistantEvaluation?.logs);
     return executionResults;
   },
 
@@ -5194,7 +5337,7 @@ const model = {
       }
 
       emptyAssistantRetryCount = 0;
-      const executionResults = await this.executeAssistantBlocks(assistantMessage.content);
+      const executionResults = await this.executeAssistantBlocks(assistantMessage);
 
       if (!executionResults || !executionResults.length) {
         return "complete";
@@ -5410,7 +5553,9 @@ const model = {
     });
 
     try {
-      const executionResults = await this.executeAssistantBlocks(section.message.content);
+      const executionResults = await this.executeAssistantBlocks(section.message, {
+        evaluateAssistantMessage: false
+      });
 
       if (!executionResults || !executionResults.length) {
         this.status = "No execution code found to rerun.";

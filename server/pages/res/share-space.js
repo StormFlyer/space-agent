@@ -2,6 +2,7 @@ import { decryptSharePayload, ensureWebCrypto } from "/pages/res/share-crypto.js
 
 const CLOUD_SHARE_ROUTE_PATTERN = /^\/share\/space\/([A-Za-z0-9]{8})$/u;
 const ENTER_TAB_ACCESS_KEY = "space.enter.tab-access";
+const STATE_VERSION_HEADER = "Space-State-Version";
 const ZIP_EOCD_SIGNATURE = 0x06054b50;
 const ZIP_CENTRAL_HEADER_SIGNATURE = 0x02014b50;
 const ZIP_LOCAL_HEADER_SIGNATURE = 0x04034b50;
@@ -11,6 +12,8 @@ const ZIP_UTF8_FLAG = 0x0800;
 const ZIP_MAX_COMMENT_BYTES = 65535;
 const PREVIEW_WIDGET_PILL_LIMIT = 12;
 const DEFAULT_PREVIEW_ICON = "🛰️";
+const SESSION_READY_MAX_ATTEMPTS = 12;
+const SESSION_READY_RETRY_DELAY_MS = 250;
 
 const previewState = {
   archiveBytes: null,
@@ -53,8 +56,15 @@ function setStatus(message, tone = "") {
     return;
   }
 
-  statusElement.textContent = message;
-  statusElement.className = tone ? "share-status " + tone : "share-status";
+  const text = String(message || "").trim();
+
+  statusElement.hidden = text.length === 0;
+  statusElement.textContent = text;
+  statusElement.className = tone && text ? "share-status " + tone : "share-status";
+}
+
+function clearStatus() {
+  setStatus("");
 }
 
 async function readJson(pathname) {
@@ -100,7 +110,15 @@ async function cloneShareArchive(token, payloadBytes) {
     throw new Error(payload.error || "Request failed.");
   }
 
-  return payload;
+  return {
+    ...payload,
+    stateVersion: normalizeStateVersion(response.headers.get(STATE_VERSION_HEADER))
+  };
+}
+
+function normalizeStateVersion(value) {
+  const candidate = Math.floor(Number(value));
+  return Number.isFinite(candidate) && candidate > 0 ? candidate : 0;
 }
 
 function togglePasswordPrompt(visible) {
@@ -130,6 +148,12 @@ function setButtonBusy(button, isBusy) {
 
   button.disabled = Boolean(isBusy);
   button.setAttribute("aria-busy", isBusy ? "true" : "false");
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function escapeRegExp(value) {
@@ -542,6 +566,42 @@ function grantTabAccess() {
   }
 }
 
+async function waitForGuestSessionReady(minimumStateVersion = 0) {
+  for (let attempt = 0; attempt < SESSION_READY_MAX_ATTEMPTS; attempt += 1) {
+    const headers = new Headers();
+
+    if (minimumStateVersion > 0) {
+      headers.set(STATE_VERSION_HEADER, String(minimumStateVersion));
+    }
+
+    const response = await fetch("/api/login_check", {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers,
+      method: "GET"
+    });
+
+    if (response.status === 503) {
+      await wait(SESSION_READY_RETRY_DELAY_MS);
+      continue;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(String(payload.error || "Could not confirm the guest session."));
+    }
+
+    if (payload.authenticated === true) {
+      return payload;
+    }
+
+    await wait(SESSION_READY_RETRY_DELAY_MS);
+  }
+
+  throw new Error("The guest session did not become ready in time. Try opening the shared space again.");
+}
+
 async function ensureRawShareBytes(token) {
   if (previewState.rawShareBytes instanceof Uint8Array && previewState.rawShareBytes.length > 0) {
     return previewState.rawShareBytes;
@@ -553,13 +613,11 @@ async function ensureRawShareBytes(token) {
 
 async function prepareSharePreview({ token, encryption = null, password = "" }) {
   clearPreparedArchive();
-  setStatus("Reading shared space preview...");
+  setStatus("Preparing shared space...");
   const shareBytes = await ensureRawShareBytes(token);
   let archiveBytes = shareBytes;
 
   if (encryption?.encrypted === true) {
-    setStatus("Unlocking shared space preview...");
-
     try {
       archiveBytes = await decryptSharePayload(shareBytes, encryption, password);
     } catch {
@@ -572,17 +630,19 @@ async function prepareSharePreview({ token, encryption = null, password = "" }) 
   previewState.preview = preview;
   renderPreview(preview);
   toggleOpenButton(true);
-  setStatus("Ready to open the shared space.", "ok");
+  clearStatus();
   return preview;
 }
 
 async function openSharedSpace(token) {
   if (!(previewState.archiveBytes instanceof Uint8Array) || previewState.archiveBytes.length === 0) {
-    throw new Error("The shared space preview is not ready yet.");
+    throw new Error("The shared space is not ready yet.");
   }
 
   setStatus("Creating guest space...");
   const cloneResult = await cloneShareArchive(token, previewState.archiveBytes);
+  setStatus("Preparing guest session...");
+  await waitForGuestSessionReady(cloneResult.stateVersion);
   grantTabAccess();
   setStatus("Opening shared space...", "ok");
   window.location.replace(String(cloneResult.redirectUrl || "/"));
@@ -609,6 +669,7 @@ async function init() {
   let shareInfo;
 
   try {
+    setStatus("Preparing shared space...");
     shareInfo = await readJson("/api/cloud_share_info?token=" + encodeURIComponent(token));
   } catch (error) {
     setStatus(error.message || "Cloud share not found.", "error");
@@ -645,14 +706,14 @@ async function init() {
     }
 
     togglePasswordPrompt(true);
-    setStatus("Enter the share password to unlock the preview.");
+    clearStatus();
     passwordInput?.focus();
     passwordForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const password = String(passwordInput?.value || "");
 
       if (!password) {
-        setStatus("Enter the share password to unlock the preview.", "error");
+        setStatus("Enter the share password.", "error");
         passwordInput?.focus();
         return;
       }
@@ -670,7 +731,7 @@ async function init() {
         passwordInput.value = "";
         openButton?.focus();
       } catch (error) {
-        setStatus(error.message || "Could not prepare the shared space preview.", "error");
+        setStatus(error.message || "Could not prepare the shared space.", "error");
         setButtonBusy(passwordSubmit, false);
         setButtonBusy(openButton, false);
         passwordInput?.select();
@@ -686,7 +747,7 @@ async function init() {
   try {
     await prepareSharePreview({ token });
   } catch (error) {
-    setStatus(error.message || "Could not prepare the shared space preview.", "error");
+    setStatus(error.message || "Could not prepare the shared space.", "error");
     return;
   }
 

@@ -7,6 +7,11 @@ import {
   guardAgentFunction
 } from "./agent-function-availability.js";
 import {
+  browserConsoleEventLevelToLogLevel,
+  logBrowser,
+  setBrowserLogLevel
+} from "./browser-logging.js";
+import {
   collectWebviewNavigationState,
   focusWebview,
   getDesktopBrowserWebviewPartition,
@@ -40,6 +45,9 @@ const DEFAULT_FRAME_SRC = "/mod/_core/web_browsing/browser-frame.html";
 const FRAME_REQUEST_TIMEOUT_MS = 450;
 const FRAME_SYNC_ATTEMPTS = 5;
 const FRAME_SYNC_DELAY_MS = 120;
+const FRAME_NAVIGATION_WAIT_MS = 2500;
+const FRAME_NAVIGATION_READY_TIMEOUT_MS = 8000;
+const FRAME_NAVIGATION_QUIET_MS = 250;
 const WINDOW_CASCADE_X_STEP = 28;
 const WINDOW_CASCADE_Y_STEP = 24;
 const WINDOW_MARGIN = 16;
@@ -53,6 +61,8 @@ const WINDOW_MINIMIZED_WIDTH_EM = 12;
 const WINDOW_TOP_RESERVE_EM = 4.5;
 const DEFAULT_HEIGHT_RATIO = 0.8;
 const DEFAULT_MAX_HEIGHT_EM = 100;
+const PERSISTED_BROWSER_WINDOWS_STORAGE_KEY = "space.web_browsing.windows.v1";
+const PERSISTED_BROWSER_WINDOWS_WRITE_DELAY_MS = 80;
 const ROUTER_STAGE_APPROX_MAX_WIDTH_REM = 84;
 const AGENT_BROWSER_INTERACTION_MESSAGE_TYPES = new Set([
   "click",
@@ -242,6 +252,79 @@ function getNextZIndex() {
   return nextWindowZIndex;
 }
 
+function getBrowserWindowStorage() {
+  try {
+    const storage = globalThis.localStorage;
+    return storage
+      && typeof storage.getItem === "function"
+      && typeof storage.setItem === "function"
+      && typeof storage.removeItem === "function"
+      ? storage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePersistedBrowserWindows(rawValue) {
+  if (!rawValue) {
+    return [];
+  }
+
+  try {
+    const parsedValue = JSON.parse(String(rawValue));
+    return Array.isArray(parsedValue) ? parsedValue : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildPersistedBrowserWindowSnapshot(browserWindow) {
+  if (!browserWindow || typeof browserWindow !== "object") {
+    return null;
+  }
+
+  const url = resolveBrowserLocation(
+    browserWindow.currentUrl
+      || browserWindow.frameSrc
+      || browserWindow.addressValue
+      || resolveDefaultFrameSrc()
+  );
+  if (!url) {
+    return null;
+  }
+
+  return {
+    id: String(browserWindow.id || "").trim(),
+    instanceKey: Math.max(1, roundPx(browserWindow.instanceKey, 1)),
+    isMinimized: browserWindow.isMinimized === true,
+    position: {
+      x: roundPx(browserWindow.position?.x),
+      y: roundPx(browserWindow.position?.y)
+    },
+    size: {
+      height: roundPx(browserWindow.size?.height),
+      width: roundPx(browserWindow.size?.width)
+    },
+    url,
+    zIndex: Math.max(1, roundPx(browserWindow.zIndex, 1))
+  };
+}
+
+function syncBrowserWindowCounters(windows = []) {
+  const maxInstanceKey = windows.reduce((currentMax, browserWindow) => {
+    const nextValue = Math.max(0, roundPx(browserWindow?.instanceKey));
+    return Math.max(currentMax, nextValue);
+  }, 0);
+  const maxZIndex = windows.reduce((currentMax, browserWindow) => {
+    const nextValue = Math.max(0, roundPx(browserWindow?.zIndex));
+    return Math.max(currentMax, nextValue);
+  }, 0);
+
+  nextBrowserWindowInstanceKey = Math.max(nextBrowserWindowInstanceKey, maxInstanceKey + 1);
+  nextWindowZIndex = Math.max(nextWindowZIndex, maxZIndex);
+}
+
 function releasePointerCapture(interaction) {
   try {
     interaction?.captureTarget?.releasePointerCapture?.(interaction.pointerId);
@@ -277,6 +360,26 @@ function resolveBrowserLocation(value) {
   } catch {
     return normalizedValue;
   }
+}
+
+function looksLikeLocalBrowserHost(value) {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return false;
+  }
+
+  const host = normalizedValue.split(/[/?#]/u, 1)[0] || "";
+  return /^(?:localhost|\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?$/iu.test(host);
+}
+
+function looksLikeTypedBrowserHost(value) {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue || /\s/u.test(normalizedValue)) {
+    return false;
+  }
+
+  const host = normalizedValue.split(/[/?#]/u, 1)[0] || "";
+  return /^(?:localhost|\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z\d-]{2,63})(?::\d+)?$/iu.test(host);
 }
 
 function getRuntime() {
@@ -362,160 +465,154 @@ function normalizeCreateWindowOptions(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
 }
 
-function createRuntimeBrowserHandle(store, id) {
+async function settleRuntimeBrowserWindowState(store, id, options = {}) {
   const normalizedId = normalizeAgentBrowserId(id);
-  const agentId = toAgentBrowserId(normalizedId);
-
-  if (!normalizedId) {
+  const browserWindow = normalizedId ? store.getWindow(normalizedId) : null;
+  if (!browserWindow) {
     return null;
   }
 
-  const requireWindow = () => {
-    const browserWindow = store.getWindow(normalizedId);
+  if (options.waitForNavigation && typeof store.waitForNavigationObservation === "function") {
+    const navigationObserved = await store.waitForNavigationObservation(normalizedId, {
+      timeoutMs: options.navigationWaitMs
+    });
 
-    if (!browserWindow) {
-      throw new Error(`Browser window "${normalizedId}" was not found.`);
+    if (navigationObserved && typeof store.waitForGuestUsableOrSettled === "function") {
+      const settledState = await store.waitForGuestUsableOrSettled(normalizedId, {
+        quietMs: options.navigationQuietMs,
+        syncAttempts: options.attempts,
+        timeoutMs: options.navigationReadyTimeoutMs
+      });
+      return settledState ?? buildRuntimeBrowserWindowSnapshot(store.getWindow(normalizedId));
     }
+  }
 
-    return browserWindow;
+  const settleDelayMs = Math.max(0, Number(options.settleDelayMs) || 0);
+  if (settleDelayMs > 0) {
+    await wait(settleDelayMs);
+  }
+
+  if (typeof store.syncNavigationState === "function") {
+    await store.syncNavigationState(normalizedId, {
+      allowUnready: options.allowUnready !== false,
+      attempts: Math.max(1, Number(options.attempts) || (FRAME_SYNC_ATTEMPTS + 2))
+    });
+  }
+
+  return buildRuntimeBrowserWindowSnapshot(store.getWindow(normalizedId));
+}
+
+async function performRuntimeBrowserRead(store, id, type, payload = null, options = {}) {
+  const normalizedId = normalizeAgentBrowserId(id);
+  const browserWindow = normalizedId ? store.getWindow(normalizedId) : null;
+  if (!browserWindow) {
+    throw new Error(`Browser window "${String(id || "").trim()}" was not found.`);
+  }
+
+  if (typeof store.rememberBrowserInteraction === "function") {
+    store.rememberBrowserInteraction(normalizedId, type);
+  }
+
+  await settleRuntimeBrowserWindowState(store, normalizedId, {
+    attempts: options.syncAttempts,
+    allowUnready: true,
+    settleDelayMs: options.settleDelayMs
+  });
+  return sendBrowserFrameMessage(normalizedId, type, payload, options);
+}
+
+async function performRuntimeBrowserAction(store, id, actionType, perform, options = {}) {
+  const normalizedId = normalizeAgentBrowserId(id);
+  const browserWindow = normalizedId ? store.getWindow(normalizedId) : null;
+  if (!browserWindow) {
+    throw new Error(`Browser window "${String(id || "").trim()}" was not found.`);
+  }
+
+  if (actionType && typeof store.rememberBrowserInteraction === "function") {
+    store.rememberBrowserInteraction(normalizedId, actionType);
+  }
+
+  const beforeState = buildRuntimeBrowserWindowSnapshot(store.getWindow(normalizedId));
+  const action = await perform(normalizedId);
+  const state = await settleRuntimeBrowserWindowState(store, normalizedId, {
+    attempts: options.syncAttempts,
+    allowUnready: true,
+    navigationQuietMs: options.navigationQuietMs,
+    navigationReadyTimeoutMs: options.navigationReadyTimeoutMs,
+    navigationWaitMs: options.navigationWaitMs,
+    settleDelayMs: options.settleDelayMs ?? FRAME_SYNC_DELAY_MS,
+    waitForNavigation: options.waitForNavigation === true
+  });
+
+  if (!action || typeof action !== "object" || Array.isArray(action)) {
+    return state;
+  }
+
+  const status = {
+    ...(action.status && typeof action.status === "object" ? action.status : {})
   };
+  status.urlChanged = beforeState.currentUrl !== state.currentUrl;
+  status.titleChanged = beforeState.title !== state.title;
+  status.historyChanged = beforeState.canGoBack !== state.canGoBack
+    || beforeState.canGoForward !== state.canGoForward;
+  status.navigated = status.urlChanged || beforeState.frameSrc !== state.frameSrc;
+  status.reacted = Object.entries(status).some(([key, value]) => key !== "reacted" && key !== "noObservedEffect" && value === true);
+  status.noObservedEffect = !status.reacted;
 
   return {
-    get bridge() {
-      try {
-        return getBrowserFrameBridge(normalizedId);
-      } catch {
-        return null;
-      }
+    action: {
+      ...action,
+      status
     },
-    close: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
-      requireWindow();
-      store.closeWindow(normalizedId);
-    }),
-    content: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (payload = null, options = {}) => {
-      requireWindow();
-      return sendBrowserFrameMessage(normalizedId, "content", payload, options);
-    }),
-    detail: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId, options = {}) => {
-      requireWindow();
-      return sendBrowserFrameMessage(normalizedId, "detail", referenceId, options);
-    }),
-    dom: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (payload = null, options = {}) => {
-      requireWindow();
-      return sendBrowserFrameMessage(normalizedId, "dom", payload, options);
-    }),
-    focus: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (options = {}) => {
-      requireWindow();
-      store.focusWindow(normalizedId, options);
-      return store.getWindow(normalizedId);
-    }),
-    forward: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
-      requireWindow();
-      return store.goForward(normalizedId);
-    }),
-    get id() {
-      return agentId;
-    },
-    navigate: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (url) => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "location_navigate");
-      store.updateAddressValue(normalizedId, String(url ?? ""));
-      return store.navigateToAddress(normalizedId);
-    }),
-    click: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId) => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "click");
-      return sendBrowserFrameMessage(normalizedId, "click", referenceId);
-    }),
-    reload: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "location_reload");
-      return store.reloadFrame(normalizedId);
-    }),
-    send: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (type, payload = null, options = {}) => {
-      requireWindow();
-      if (shouldRememberAgentBrowserInteraction(type)) {
-        store.rememberBrowserInteraction(normalizedId, type);
-      }
-      return sendBrowserFrameMessage(normalizedId, type, payload, options);
-    }),
-    scroll: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId) => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "scroll");
-      return sendBrowserFrameMessage(normalizedId, "scroll", referenceId);
-    }),
-    submit: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId) => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "submit");
-      return sendBrowserFrameMessage(normalizedId, "submit", referenceId);
-    }),
-    sync: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (options = {}) => {
-      requireWindow();
-      return store.syncNavigationState(normalizedId, options);
-    }),
-    get state() {
-      return buildRuntimeBrowserWindowSnapshot(store.getWindow(normalizedId));
-    },
-    type: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId, value = "") => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "type");
-      return sendBrowserFrameMessage(normalizedId, "type", {
-        referenceId,
-        value
-      });
-    }),
-    typeSubmit: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (referenceId, value = "") => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "type_submit");
-      return sendBrowserFrameMessage(normalizedId, "type_submit", {
-        referenceId,
-        value
-      });
-    }),
-    back: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
-      requireWindow();
-      store.rememberBrowserInteraction(normalizedId, "history_back");
-      return store.goBack(normalizedId);
-    }),
-    get window() {
-      return store.getWindow(normalizedId);
-    }
+    state
   };
 }
 
 function ensureBrowserRuntimeNamespace(store) {
   const runtime = getRuntime();
   const previousNamespace = runtime.browser && typeof runtime.browser === "object" ? runtime.browser : {};
-  const getHandle = (id) => {
+  const {
+    current: _previousCurrent,
+    get: _previousGet,
+    sync: _previousSync,
+    ...preservedNamespace
+  } = previousNamespace;
+  const requireWindowId = (id) => {
     const normalizedId = normalizeAgentBrowserId(id);
-
     if (!normalizedId || !store.getWindow(normalizedId)) {
-      return null;
-    }
-
-    return createRuntimeBrowserHandle(store, normalizedId);
-  };
-  const requireHandle = (id) => {
-    const handle = getHandle(id);
-
-    if (!handle) {
       throw new Error(`Browser window "${String(id || "").trim()}" was not found.`);
     }
-
-    return handle;
+    return normalizedId;
   };
-  const openHandle = (options = {}) => {
+  const openWindow = async (options = {}) => {
     const id = store.createWindow(normalizeCreateWindowOptions(options));
     store.rememberBrowserInteraction(id, "open");
-    return getHandle(id);
+    return settleRuntimeBrowserWindowState(store, id, {
+      allowUnready: true,
+      attempts: FRAME_SYNC_ATTEMPTS + 2,
+      settleDelayMs: FRAME_SYNC_DELAY_MS
+    });
   };
   const namespace = {
-    ...previousNamespace,
+    ...preservedNamespace,
     back: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      return requireHandle(id).back();
+      return performRuntimeBrowserAction(store, id, "history_back", (normalizedId) => {
+        return store.goBack(normalizedId);
+      }, {
+        navigationQuietMs: FRAME_NAVIGATION_QUIET_MS,
+        navigationReadyTimeoutMs: FRAME_NAVIGATION_READY_TIMEOUT_MS,
+        navigationWaitMs: FRAME_NAVIGATION_WAIT_MS,
+        waitForNavigation: true
+      });
     }),
     click: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId) => {
-      return requireHandle(id).click(referenceId);
+      return performRuntimeBrowserAction(store, id, "click", async (normalizedId) => {
+        await settleRuntimeBrowserWindowState(store, normalizedId, {
+          attempts: 2,
+          allowUnready: true
+        });
+        return await sendBrowserFrameMessage(normalizedId, "click", referenceId);
+      });
     }),
     close: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
       const normalizedId = normalizeAgentBrowserId(id);
@@ -539,39 +636,38 @@ function ensureBrowserRuntimeNamespace(store) {
       return store.windows.length;
     }),
     content: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, payload = null, options = {}) => {
-      return requireHandle(id).content(payload, options);
+      return performRuntimeBrowserRead(store, id, "content", payload, options);
     }),
     create: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (options = {}) => {
-      return openHandle(options);
-    }),
-    current: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
-      const browserWindow = getFrontmostBrowserWindow(store.windows);
-      return browserWindow ? getHandle(browserWindow.id) : null;
+      return openWindow(options);
     }),
     detail: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId, options = {}) => {
-      return requireHandle(id).detail(referenceId, options);
+      return performRuntimeBrowserRead(store, id, "detail", referenceId, options);
     }),
     dom: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, payload = null, options = {}) => {
-      return requireHandle(id).dom(payload, options);
+      return performRuntimeBrowserRead(store, id, "dom", payload, options);
     }),
     focus: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, options = {}) => {
-      const normalizedId = normalizeAgentBrowserId(id);
-
-      if (!normalizedId) {
-        return null;
-      }
-
+      const normalizedId = requireWindowId(id);
+      store.rememberBrowserInteraction(normalizedId, "focus");
       store.focusWindow(normalizedId, options);
-      return getHandle(normalizedId);
+      return settleRuntimeBrowserWindowState(store, normalizedId, {
+        allowUnready: true,
+        attempts: 1
+      });
     }),
     forward: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      return requireHandle(id).forward();
-    }),
-    get: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      return getHandle(id);
+      return performRuntimeBrowserAction(store, id, "history_forward", (normalizedId) => {
+        return store.goForward(normalizedId);
+      }, {
+        navigationQuietMs: FRAME_NAVIGATION_QUIET_MS,
+        navigationReadyTimeoutMs: FRAME_NAVIGATION_READY_TIMEOUT_MS,
+        navigationWaitMs: FRAME_NAVIGATION_WAIT_MS,
+        waitForNavigation: true
+      });
     }),
     has: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      return Boolean(getHandle(id));
+      return Boolean(store.getWindow(normalizeAgentBrowserId(id)));
     }),
     ids: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, () => {
       return store.windows.map((browserWindow) => toAgentBrowserId(browserWindow.id));
@@ -580,35 +676,88 @@ function ensureBrowserRuntimeNamespace(store) {
       return store.windows.map((browserWindow) => buildRuntimeBrowserWindowSnapshot(browserWindow));
     }),
     navigate: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, url) => {
-      return requireHandle(id).navigate(url);
+      return performRuntimeBrowserAction(store, id, "location_navigate", (normalizedId) => {
+        store.updateAddressValue(normalizedId, String(url ?? ""));
+        return store.navigateToAddress(normalizedId);
+      }, {
+        navigationQuietMs: FRAME_NAVIGATION_QUIET_MS,
+        navigationReadyTimeoutMs: FRAME_NAVIGATION_READY_TIMEOUT_MS,
+        navigationWaitMs: FRAME_NAVIGATION_WAIT_MS,
+        waitForNavigation: true
+      });
     }),
     open: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (options = {}) => {
-      return openHandle(options);
+      return openWindow(options);
     }),
+    setLogLevel(level) {
+      return setBrowserLogLevel(level);
+    },
     reload: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      return requireHandle(id).reload();
+      return performRuntimeBrowserAction(store, id, "location_reload", (normalizedId) => {
+        return store.reloadFrame(normalizedId);
+      }, {
+        navigationQuietMs: FRAME_NAVIGATION_QUIET_MS,
+        navigationReadyTimeoutMs: FRAME_NAVIGATION_READY_TIMEOUT_MS,
+        navigationWaitMs: FRAME_NAVIGATION_WAIT_MS,
+        waitForNavigation: true
+      });
     }),
     scroll: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId) => {
-      return requireHandle(id).scroll(referenceId);
+      return performRuntimeBrowserAction(store, id, "scroll", async (normalizedId) => {
+        await settleRuntimeBrowserWindowState(store, normalizedId, {
+          attempts: 2,
+          allowUnready: true
+        });
+        return await sendBrowserFrameMessage(normalizedId, "scroll", referenceId);
+      });
     }),
     send: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, type, payload = null, options = {}) => {
-      return requireHandle(id).send(type, payload, options);
+      const normalizedId = requireWindowId(id);
+      if (shouldRememberAgentBrowserInteraction(type)) {
+        store.rememberBrowserInteraction(normalizedId, type);
+      }
+      return sendBrowserFrameMessage(normalizedId, type, payload, options);
     }),
     state: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id) => {
-      const browserWindow = store.getWindow(normalizeAgentBrowserId(id));
-      return buildRuntimeBrowserWindowSnapshot(browserWindow);
+      const normalizedId = requireWindowId(id);
+      store.rememberBrowserInteraction(normalizedId, "state");
+      return settleRuntimeBrowserWindowState(store, normalizedId, {
+        allowUnready: true,
+        attempts: FRAME_SYNC_ATTEMPTS + 2
+      });
     }),
     submit: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId) => {
-      return requireHandle(id).submit(referenceId);
-    }),
-    sync: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, options = {}) => {
-      return requireHandle(id).sync(options);
+      return performRuntimeBrowserAction(store, id, "submit", async (normalizedId) => {
+        await settleRuntimeBrowserWindowState(store, normalizedId, {
+          attempts: 2,
+          allowUnready: true
+        });
+        return await sendBrowserFrameMessage(normalizedId, "submit", referenceId);
+      });
     }),
     type: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId, value = "") => {
-      return requireHandle(id).type(referenceId, value);
+      return performRuntimeBrowserAction(store, id, "type", async (normalizedId) => {
+        await settleRuntimeBrowserWindowState(store, normalizedId, {
+          attempts: 2,
+          allowUnready: true
+        });
+        return await sendBrowserFrameMessage(normalizedId, "type", {
+          referenceId,
+          value
+        });
+      });
     }),
     typeSubmit: guardAgentFunction(AGENT_FUNCTION_REQUIREMENT.NATIVE_APP_ONLY, (id, referenceId, value = "") => {
-      return requireHandle(id).typeSubmit(referenceId, value);
+      return performRuntimeBrowserAction(store, id, "type_submit", async (normalizedId) => {
+        await settleRuntimeBrowserWindowState(store, normalizedId, {
+          attempts: 2,
+          allowUnready: true
+        });
+        return await sendBrowserFrameMessage(normalizedId, "type_submit", {
+          referenceId,
+          value
+        });
+      });
     })
   };
 
@@ -628,6 +777,11 @@ function normalizeTypedBrowserLocation(value) {
 
   if (/^[/?#.]/u.test(normalizedValue)) {
     return resolveBrowserLocation(normalizedValue);
+  }
+
+  if (looksLikeTypedBrowserHost(normalizedValue)) {
+    const protocol = looksLikeLocalBrowserHost(normalizedValue) ? "http://" : "https://";
+    return resolveBrowserLocation(`${protocol}${normalizedValue}`);
   }
 
   return resolveBrowserLocation(`https://${normalizedValue}`);
@@ -682,12 +836,14 @@ function collectIframeFallbackState(iframe) {
 
   let canGoBack = false;
   let canGoForward = false;
+  let loading = false;
   let title = "";
   let url = "";
 
   try {
     url = String(iframe.contentWindow?.location?.href || "");
     title = String(iframe.contentDocument?.title || "");
+    loading = String(iframe.contentDocument?.readyState || "").toLowerCase() !== "complete";
 
     const navigation = iframe.contentWindow?.navigation;
     const navigationCanGoBack = readNavigationCapability(navigation, "canGoBack");
@@ -709,9 +865,28 @@ function collectIframeFallbackState(iframe) {
   return {
     canGoBack,
     canGoForward,
+    loading,
     title,
     url
   };
+}
+
+function readImmediateBrowserNavigationState(store, id) {
+  const webview = typeof store.getWebview === "function"
+    ? store.getWebview(id)
+    : null;
+  if (webview) {
+    return collectWebviewNavigationState(webview);
+  }
+
+  const iframe = typeof store.getIframe === "function"
+    ? store.getIframe(id)
+    : null;
+  if (iframe) {
+    return collectIframeFallbackState(iframe);
+  }
+
+  return null;
 }
 
 function createBrowserWindowState(id, cascadeIndex = 0, options = {}) {
@@ -719,11 +894,15 @@ function createBrowserWindowState(id, cascadeIndex = 0, options = {}) {
   const spawnArea = getSpawnWindowArea();
   const size = getDefaultExpandedSize(spawnArea, clampArea);
   const initialUrl = String(options.url || "").trim();
-  const frameSrc = resolveBrowserLocation(initialUrl || resolveDefaultFrameSrc());
+  const frameSrc = initialUrl
+    ? normalizeTypedBrowserLocation(initialUrl)
+    : resolveBrowserLocation(resolveDefaultFrameSrc());
 
   return {
     addressValue: frameSrc,
+    bridgeHandlersReady: false,
     bridgeStateReady: false,
+    bridgeTransportReady: false,
     canGoBack: false,
     canGoForward: false,
     currentUrl: frameSrc,
@@ -731,6 +910,7 @@ function createBrowserWindowState(id, cascadeIndex = 0, options = {}) {
     id,
     instanceKey: getNextBrowserWindowInstanceKey(),
     isMinimized: false,
+    loading: false,
     position: getDefaultPosition(size, spawnArea, clampArea, cascadeIndex),
     size: { ...size },
     title: "",
@@ -744,11 +924,15 @@ const model = {
   lastInteractedBrowserId: "",
   lastInteractedBrowserInstanceKey: null,
   offDesktopBrowserHostEvents: null,
+  observedNavigationVersions: Object.create(null),
+  pendingNavigations: Object.create(null),
+  persistedWindowsWriteTimeoutId: null,
   syncTokens: Object.create(null),
   windows: [],
 
   mount() {
     ensureBrowserRuntimeNamespace(this);
+    this.restorePersistedWindows();
 
     if (!this.offDesktopBrowserHostEvents) {
       this.offDesktopBrowserHostEvents = bindDesktopBrowserHostEvents({
@@ -766,22 +950,142 @@ const model = {
       });
     }
 
-    this.windows.forEach((browserWindow) => {
-      this.ensureWindowGeometry(browserWindow);
+    this.fitWindowsToViewport({
+      persist: false
     });
-    if (this.usesNativeDesktopSurface) {
-      syncAllBrowserSurfaces();
-    }
   },
 
   unmount() {
     this.stopPointer();
+    this.persistWindowsNow();
 
     if (typeof this.offDesktopBrowserHostEvents === "function") {
       this.offDesktopBrowserHostEvents();
     }
 
     this.offDesktopBrowserHostEvents = null;
+  },
+
+  fitWindowsToViewport(options = {}) {
+    this.windows.forEach((browserWindow) => {
+      this.ensureWindowGeometry(browserWindow);
+    });
+
+    if (this.usesNativeDesktopSurface && options.syncSurfaces !== false) {
+      syncAllBrowserSurfaces();
+    }
+
+    if (options.persist !== false) {
+      this.schedulePersistedWindowsWrite(options.persistDelayMs);
+    }
+  },
+
+  schedulePersistedWindowsWrite(delayMs = PERSISTED_BROWSER_WINDOWS_WRITE_DELAY_MS) {
+    if (this.persistedWindowsWriteTimeoutId != null) {
+      globalThis.clearTimeout?.(this.persistedWindowsWriteTimeoutId);
+      this.persistedWindowsWriteTimeoutId = null;
+    }
+
+    const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+    if (normalizedDelayMs === 0) {
+      this.persistWindowsNow();
+      return;
+    }
+
+    this.persistedWindowsWriteTimeoutId = globalThis.setTimeout(() => {
+      this.persistedWindowsWriteTimeoutId = null;
+      this.persistWindowsNow();
+    }, normalizedDelayMs);
+  },
+
+  persistWindowsNow() {
+    if (this.persistedWindowsWriteTimeoutId != null) {
+      globalThis.clearTimeout?.(this.persistedWindowsWriteTimeoutId);
+      this.persistedWindowsWriteTimeoutId = null;
+    }
+
+    const storage = getBrowserWindowStorage();
+    if (!storage) {
+      return false;
+    }
+
+    const snapshots = this.windows
+      .map((browserWindow) => buildPersistedBrowserWindowSnapshot(browserWindow))
+      .filter(Boolean);
+
+    try {
+      if (!snapshots.length) {
+        storage.removeItem(PERSISTED_BROWSER_WINDOWS_STORAGE_KEY);
+        return true;
+      }
+
+      storage.setItem(PERSISTED_BROWSER_WINDOWS_STORAGE_KEY, JSON.stringify(snapshots));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  restorePersistedWindows() {
+    if (this.windows.length > 0) {
+      return false;
+    }
+
+    const storage = getBrowserWindowStorage();
+    if (!storage) {
+      return false;
+    }
+
+    const persistedWindows = parsePersistedBrowserWindows(
+      storage.getItem(PERSISTED_BROWSER_WINDOWS_STORAGE_KEY)
+    );
+    if (!persistedWindows.length) {
+      return false;
+    }
+
+    const restoredIds = new Set();
+    const restoredWindows = [];
+
+    persistedWindows.forEach((entry, index) => {
+      const storedId = String(entry?.id || "").trim();
+      const browserId = storedId && !restoredIds.has(storedId)
+        ? storedId
+        : getNextBrowserWindowId([...this.windows, ...restoredWindows], globalThis.document);
+      restoredIds.add(browserId);
+
+      const restoredUrl = normalizeTypedBrowserLocation(entry?.url)
+        || resolveBrowserLocation(resolveDefaultFrameSrc());
+      const browserWindow = createBrowserWindowState(browserId, index, {
+        url: restoredUrl
+      });
+
+      browserWindow.isMinimized = entry?.isMinimized === true;
+      browserWindow.instanceKey = Math.max(1, roundPx(entry?.instanceKey, browserWindow.instanceKey));
+      browserWindow.position = {
+        x: roundPx(entry?.position?.x, browserWindow.position.x),
+        y: roundPx(entry?.position?.y, browserWindow.position.y)
+      };
+      browserWindow.size = {
+        height: roundPx(entry?.size?.height, browserWindow.size.height),
+        width: roundPx(entry?.size?.width, browserWindow.size.width)
+      };
+      browserWindow.zIndex = Math.max(1, roundPx(entry?.zIndex, browserWindow.zIndex));
+
+      restoredWindows.push(browserWindow);
+    });
+
+    if (!restoredWindows.length) {
+      storage.removeItem(PERSISTED_BROWSER_WINDOWS_STORAGE_KEY);
+      return false;
+    }
+
+    this.windows = restoredWindows;
+    syncBrowserWindowCounters(restoredWindows);
+    this.fitWindowsToViewport({
+      persistDelayMs: 0,
+      syncSurfaces: false
+    });
+    return true;
   },
 
   get hasOpenWindows() {
@@ -825,6 +1129,51 @@ const model = {
     return isWebviewLike(element) ? element : null;
   },
 
+  getObservedNavigationVersion(id) {
+    return Number(this.observedNavigationVersions[String(id || "").trim()] || 0);
+  },
+
+  markNavigationObserved(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) {
+      return 0;
+    }
+
+    const nextVersion = this.getObservedNavigationVersion(normalizedId) + 1;
+    this.observedNavigationVersions[normalizedId] = nextVersion;
+    delete this.pendingNavigations[normalizedId];
+    return nextVersion;
+  },
+
+  startPendingNavigation(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    this.pendingNavigations[normalizedId] = {
+      observedVersion: this.getObservedNavigationVersion(normalizedId)
+    };
+  },
+
+  clearPendingNavigation(id) {
+    delete this.pendingNavigations[String(id || "").trim()];
+  },
+
+  hasUnobservedPendingNavigation(id) {
+    const normalizedId = String(id || "").trim();
+    const pendingNavigation = this.pendingNavigations[normalizedId];
+    if (!pendingNavigation) {
+      return false;
+    }
+
+    return this.getObservedNavigationVersion(normalizedId) === Number(pendingNavigation.observedVersion || 0);
+  },
+
+  collectImmediateNavigationState(id) {
+    return readImmediateBrowserNavigationState(this, id);
+  },
+
   webviewPartition(id) {
     return getDesktopBrowserWebviewPartition(id);
   },
@@ -852,7 +1201,10 @@ const model = {
     const browserWindow = createBrowserWindowState(id, this.windows.length, options);
 
     this.windows = [...this.windows, browserWindow];
-    this.focusWindow(id);
+    this.focusWindow(id, {
+      persist: false
+    });
+    this.persistWindowsNow();
 
     return id;
   },
@@ -875,6 +1227,10 @@ const model = {
 
     if (this.usesNativeDesktopSurface) {
       syncDesktopBrowserSurface(browserWindow.id);
+    }
+
+    if (options.persist !== false) {
+      this.schedulePersistedWindowsWrite();
     }
   },
 
@@ -941,7 +1297,10 @@ const model = {
     this.unregisterBrowserSurface(browserWindow.id);
     this.unregisterWebview(browserWindow.id);
     this.unregisterIframe(browserWindow.id);
+    delete this.observedNavigationVersions[browserWindow.id];
+    delete this.pendingNavigations[browserWindow.id];
     this.windows = this.windows.filter((entry) => entry.id !== browserWindow.id);
+    this.persistWindowsNow();
   },
 
   toggleMinimized(id) {
@@ -964,15 +1323,13 @@ const model = {
     if (this.usesNativeDesktopSurface) {
       syncDesktopBrowserSurface(browserWindow.id);
     }
+    this.persistWindowsNow();
   },
 
   handleViewportResize() {
-    this.windows.forEach((browserWindow) => {
-      this.ensureWindowGeometry(browserWindow);
+    this.fitWindowsToViewport({
+      persistDelayMs: 0
     });
-    if (this.usesNativeDesktopSurface) {
-      syncAllBrowserSurfaces();
-    }
   },
 
   startDrag(id, event) {
@@ -1051,6 +1408,7 @@ const model = {
       if (this.usesNativeDesktopSurface) {
         syncDesktopBrowserSurface(browserWindow.id);
       }
+      this.schedulePersistedWindowsWrite();
       return;
     }
 
@@ -1063,6 +1421,7 @@ const model = {
     if (this.usesNativeDesktopSurface) {
       syncDesktopBrowserSurface(browserWindow.id);
     }
+    this.schedulePersistedWindowsWrite();
   },
 
   stopPointer(event) {
@@ -1086,6 +1445,7 @@ const model = {
       if (this.usesNativeDesktopSurface) {
         syncDesktopBrowserSurface(browserWindow.id);
       }
+      this.persistWindowsNow();
     }
   },
 
@@ -1131,11 +1491,31 @@ const model = {
       // The host bridge remains optional outside packaged desktop runs.
     }
 
+    const handleIframeFocus = () => {
+      this.focusWindow(id, {
+        fromBrowserSurface: true
+      });
+    };
+    const iframeInteractionListeners = [
+      ["pointerdown", handleIframeFocus],
+      ["mousedown", handleIframeFocus],
+      ["focus", handleIframeFocus]
+    ];
+
+    iframeInteractionListeners.forEach(([eventName, handler]) => {
+      iframe.addEventListener?.(eventName, handler);
+    });
+
     this.frameConnections[browserWindow.id] = {
       bridge,
       iframe,
       offNavigationState,
       offOpenWindow,
+      offIframeEvents() {
+        iframeInteractionListeners.forEach(([eventName, handler]) => {
+          iframe.removeEventListener?.(eventName, handler);
+        });
+      },
       webview: null
     };
 
@@ -1219,6 +1599,10 @@ const model = {
     let bridge = null;
     let offNavigationState = null;
     let offOpenWindow = null;
+    let offPreloadReady = null;
+    let offPreloadReceived = null;
+    let offBridgeReady = null;
+    let offCoreHandlersReady = null;
 
     try {
       bridge = getBrowserFrameBridge(id);
@@ -1228,6 +1612,27 @@ const model = {
       offOpenWindow = bridge.on("open_window", (message) => {
         const url = String(message?.payload?.url || "").trim();
         this.createWindow(url ? { url } : {});
+      });
+      offPreloadReady = bridge.on("__preload_ready__", (message) => {
+        browserWindow.bridgeTransportReady = true;
+        logBrowser("debug", `[space-browser] Guest preload ready for ${browserWindow.id}.`, message.payload);
+      });
+      offPreloadReceived = bridge.on("__preload_received__", (message) => {
+        browserWindow.bridgeTransportReady = true;
+        logBrowser("debug", `[space-browser] Guest preload received host envelope for ${browserWindow.id}.`, message.payload);
+      });
+      offBridgeReady = bridge.on("__bridge_ready__", (message) => {
+        browserWindow.bridgeTransportReady = true;
+        browserWindow.bridgeStateReady = false;
+        logBrowser("debug", `[space-browser] Guest bridge runtime ready for ${browserWindow.id}.`, message.payload);
+      });
+      offCoreHandlersReady = bridge.on("__core_handlers_ready__", (message) => {
+        browserWindow.bridgeTransportReady = true;
+        browserWindow.bridgeHandlersReady = true;
+        logBrowser("debug", `[space-browser] Guest core handlers ready for ${browserWindow.id}.`, message.payload);
+        void this.syncNavigationState(id, {
+          attempts: 2
+        });
       });
     } catch {
       // The guest bridge may not be ready until the first preload runs.
@@ -1265,21 +1670,36 @@ const model = {
       syncState();
     };
     const handleDidStartLoading = () => {
+      browserWindow.bridgeHandlersReady = false;
       browserWindow.bridgeStateReady = false;
+      browserWindow.bridgeTransportReady = false;
+      browserWindow.loading = true;
       runtimeState.injected = false;
+      this.markNavigationObserved(id);
       stabilizeEmbedder();
       syncState();
     };
     const handleDidStopLoading = () => {
+      browserWindow.loading = false;
       stabilizeEmbedder();
       syncState();
-      void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 3 });
+      if (browserWindow.bridgeHandlersReady) {
+        void this.syncNavigationState(id, { attempts: 2 });
+      }
     };
-    const handleNavigationEvent = () => {
+    const handleDidNavigate = () => {
+      this.markNavigationObserved(id);
       stabilizeEmbedder();
       syncState();
     };
-    const handlePointerDown = () => {
+    const handleTitleUpdated = () => {
+      stabilizeEmbedder();
+      syncState();
+    };
+    const handleSurfaceFocus = () => {
+      this.focusWindow(id, {
+        fromBrowserSurface: true
+      });
       focusWebview(webview);
     };
     const handleDomReady = () => {
@@ -1288,7 +1708,9 @@ const model = {
       focusWebview(webview);
       if (runtimeState.injected) {
         syncState();
-        void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 3 });
+        if (browserWindow.bridgeHandlersReady) {
+          void this.syncNavigationState(id, { attempts: 2 });
+        }
         return;
       }
 
@@ -1298,23 +1720,41 @@ const model = {
         injectPath: BROWSER_INJECT_PATH
       }).then(() => {
         syncState();
-        return this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 3 });
-      }).catch(() => {
+        return true;
+      }).catch((error) => {
+        logBrowser("error", `[space-browser] Failed to inject browser runtime into ${browserWindow.id}.`, error);
         runtimeState.injected = false;
         syncState();
       });
+    };
+
+    const handleConsoleMessage = (event) => {
+      const messageText = String(event?.message || "");
+      if (!messageText.includes("[space-browser") && !messageText.includes("[space-desktop/browser-webview-preload]")) {
+        return;
+      }
+
+      const level = Number(event?.level);
+      const payload = {
+        browserId: browserWindow.id,
+        line: Number(event?.line) || 0,
+        sourceId: String(event?.sourceId || "")
+      };
+      logBrowser(browserConsoleEventLevelToLogLevel(level), messageText, payload);
     };
 
     const webviewListeners = [
       ["did-attach", handleDidAttach],
       ["did-start-loading", handleDidStartLoading],
       ["did-stop-loading", handleDidStopLoading],
-      ["did-navigate", handleNavigationEvent],
-      ["did-navigate-in-page", handleNavigationEvent],
-      ["page-title-updated", handleNavigationEvent],
+      ["did-navigate", handleDidNavigate],
+      ["did-navigate-in-page", handleDidNavigate],
+      ["page-title-updated", handleTitleUpdated],
       ["dom-ready", handleDomReady],
-      ["pointerdown", handlePointerDown],
-      ["mousedown", handlePointerDown]
+      ["console-message", handleConsoleMessage],
+      ["pointerdown", handleSurfaceFocus],
+      ["mousedown", handleSurfaceFocus],
+      ["focus", handleSurfaceFocus]
     ];
 
     webviewListeners.forEach(([eventName, handler]) => {
@@ -1324,8 +1764,12 @@ const model = {
     this.frameConnections[browserWindow.id] = {
       bridge,
       iframe: null,
+      offBridgeReady,
+      offCoreHandlersReady,
       offNavigationState,
       offOpenWindow,
+      offPreloadReady,
+      offPreloadReceived,
       offWebviewEvents() {
         webviewListeners.forEach(([eventName, handler]) => {
           webview.removeEventListener(eventName, handler);
@@ -1355,8 +1799,29 @@ const model = {
       connection.offOpenWindow();
     }
 
+    if (typeof connection.offPreloadReady === "function") {
+      connection.offPreloadReady();
+    }
+
+    if (typeof connection.offPreloadReceived === "function") {
+      connection.offPreloadReceived();
+    }
+
+    if (typeof connection.offBridgeReady === "function") {
+      connection.offBridgeReady();
+    }
+
+    if (typeof connection.offCoreHandlersReady === "function") {
+      connection.offCoreHandlersReady();
+    }
+
+    if (typeof connection.offIframeEvents === "function") {
+      connection.offIframeEvents();
+    }
+
     connection.bridge?.destroy?.();
     delete this.frameConnections[normalizedId];
+    delete this.pendingNavigations[normalizedId];
     delete this.syncTokens[normalizedId];
   },
 
@@ -1379,6 +1844,22 @@ const model = {
       connection.offOpenWindow();
     }
 
+    if (typeof connection.offPreloadReady === "function") {
+      connection.offPreloadReady();
+    }
+
+    if (typeof connection.offPreloadReceived === "function") {
+      connection.offPreloadReceived();
+    }
+
+    if (typeof connection.offBridgeReady === "function") {
+      connection.offBridgeReady();
+    }
+
+    if (typeof connection.offCoreHandlersReady === "function") {
+      connection.offCoreHandlersReady();
+    }
+
     if (typeof connection.offWebviewEvents === "function") {
       connection.offWebviewEvents();
     }
@@ -1386,6 +1867,7 @@ const model = {
     releaseWebviewEmbedder(connection.webview);
     connection.bridge?.destroy?.();
     delete this.frameConnections[normalizedId];
+    delete this.pendingNavigations[normalizedId];
     delete this.syncTokens[normalizedId];
   },
 
@@ -1409,14 +1891,35 @@ const model = {
       connection.offOpenWindow();
     }
 
+    if (typeof connection.offPreloadReady === "function") {
+      connection.offPreloadReady();
+    }
+
+    if (typeof connection.offPreloadReceived === "function") {
+      connection.offPreloadReceived();
+    }
+
+    if (typeof connection.offBridgeReady === "function") {
+      connection.offBridgeReady();
+    }
+
+    if (typeof connection.offCoreHandlersReady === "function") {
+      connection.offCoreHandlersReady();
+    }
+
     connection.bridge?.destroy?.();
     delete this.frameConnections[normalizedId];
+    delete this.pendingNavigations[normalizedId];
     delete this.syncTokens[normalizedId];
   },
 
   applyNavigationState(id, state, options = {}) {
     const browserWindow = this.getWindow(id);
     if (!browserWindow || !state || typeof state !== "object") {
+      return;
+    }
+
+    if (options.fromBridge && this.hasUnobservedPendingNavigation(id)) {
       return;
     }
 
@@ -1435,13 +1938,21 @@ const model = {
       browserWindow.canGoForward = state.canGoForward;
     }
 
+    if (typeof state.loading === "boolean") {
+      browserWindow.loading = state.loading;
+    }
+
     if ("title" in state) {
       browserWindow.title = String(state.title || "").trim();
     }
 
     if (options.fromBridge) {
+      browserWindow.bridgeHandlersReady = true;
       browserWindow.bridgeStateReady = true;
+      browserWindow.bridgeTransportReady = true;
     }
+
+    this.schedulePersistedWindowsWrite();
   },
 
   async requestBridgePayload(id, type, payload = null, options = {}) {
@@ -1465,6 +1976,27 @@ const model = {
 
   async syncNavigationState(id, options = {}) {
     const normalizedId = String(id || "").trim();
+    const browserWindow = this.getWindow(normalizedId);
+    if (!browserWindow) {
+      return false;
+    }
+
+    if (this.hasUnobservedPendingNavigation(normalizedId)) {
+      return false;
+    }
+
+    if (!browserWindow.bridgeHandlersReady && options.allowUnready !== true) {
+      const webview = this.getWebview(normalizedId);
+      if (webview) {
+        this.applyNavigationState(normalizedId, collectWebviewNavigationState(webview));
+        return false;
+      }
+
+      const iframe = this.getIframe(normalizedId);
+      this.applyNavigationState(normalizedId, collectIframeFallbackState(iframe));
+      return false;
+    }
+
     const token = this.nextSyncToken(normalizedId);
     const attempts = Math.max(1, Number(options.attempts) || FRAME_SYNC_ATTEMPTS);
 
@@ -1506,12 +2038,97 @@ const model = {
   handleFrameLoad(id, event) {
     const browserWindow = this.getWindow(id);
     if (browserWindow) {
+      browserWindow.bridgeHandlersReady = false;
       browserWindow.bridgeStateReady = false;
+      browserWindow.bridgeTransportReady = false;
+      browserWindow.loading = false;
     }
+
+    this.markNavigationObserved(id);
 
     const iframe = event?.currentTarget;
     this.applyNavigationState(id, collectIframeFallbackState(iframe));
     void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 2 });
+  },
+
+  async waitForNavigationObservation(id, options = {}) {
+    const normalizedId = String(id || "").trim();
+    const initialVersion = this.getObservedNavigationVersion(normalizedId);
+    const timeoutMs = Math.max(0, Number(options.timeoutMs) || FRAME_NAVIGATION_WAIT_MS);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (!this.getWindow(normalizedId)) {
+        return false;
+      }
+
+      if (this.getObservedNavigationVersion(normalizedId) !== initialVersion) {
+        return true;
+      }
+
+      const immediateState = this.collectImmediateNavigationState(normalizedId);
+      if (immediateState?.loading === true) {
+        this.applyNavigationState(normalizedId, immediateState);
+        this.markNavigationObserved(normalizedId);
+        return true;
+      }
+
+      await wait(25);
+    }
+
+    this.clearPendingNavigation(normalizedId);
+    return false;
+  },
+
+  async waitForGuestUsableOrSettled(id, options = {}) {
+    const normalizedId = String(id || "").trim();
+    const timeoutMs = Math.max(0, Number(options.timeoutMs) || FRAME_NAVIGATION_READY_TIMEOUT_MS);
+    const quietMs = Math.max(0, Number(options.quietMs) || FRAME_NAVIGATION_QUIET_MS);
+    const deadline = Date.now() + timeoutMs;
+    let observedVersion = this.getObservedNavigationVersion(normalizedId);
+    let stableSince = Date.now();
+
+    while (Date.now() < deadline) {
+      const browserWindow = this.getWindow(normalizedId);
+      if (!browserWindow) {
+        return null;
+      }
+
+      const immediateState = this.collectImmediateNavigationState(normalizedId);
+      if (immediateState) {
+        this.applyNavigationState(normalizedId, immediateState);
+      }
+
+      const nextObservedVersion = this.getObservedNavigationVersion(normalizedId);
+      if (nextObservedVersion !== observedVersion) {
+        observedVersion = nextObservedVersion;
+        stableSince = Date.now();
+        await wait(25);
+        continue;
+      }
+
+      if (browserWindow.loading) {
+        stableSince = Date.now();
+        await wait(25);
+        continue;
+      }
+
+      if (browserWindow.bridgeHandlersReady) {
+        await this.syncNavigationState(normalizedId, {
+          allowUnready: false,
+          attempts: Math.max(1, Number(options.syncAttempts) || 2)
+        });
+      }
+
+      if (Date.now() - stableSince >= quietMs) {
+        return buildRuntimeBrowserWindowSnapshot(this.getWindow(normalizedId));
+      }
+
+      await wait(25);
+    }
+
+    const browserWindow = this.getWindow(normalizedId);
+    return browserWindow ? buildRuntimeBrowserWindowSnapshot(browserWindow) : null;
   },
 
   updateAddressValue(id, value) {
@@ -1545,6 +2162,8 @@ const model = {
     browserWindow.addressValue = nextUrl;
     browserWindow.currentUrl = nextUrl;
     browserWindow.frameSrc = nextUrl;
+    this.startPendingNavigation(id);
+    this.persistWindowsNow();
     const payload = browserWindow.bridgeStateReady
       ? await this.requestBridgePayload(id, "location_navigate", {
           url: nextUrl
@@ -1556,7 +2175,6 @@ const model = {
     }
 
     browserWindow.bridgeStateReady = false;
-    void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 2 });
   },
 
   performNavigateFallback(id, nextUrl) {
@@ -1656,6 +2274,7 @@ const model = {
     }
 
     this.focusWindow(id);
+    this.startPendingNavigation(id);
 
     const payload = browserWindow.bridgeStateReady
       ? await this.requestBridgePayload(id, "history_back")
@@ -1664,8 +2283,6 @@ const model = {
     if (!payload) {
       this.performHistoryFallback(id, "back");
     }
-
-    void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 2 });
   },
 
   async goForward(id) {
@@ -1675,6 +2292,7 @@ const model = {
     }
 
     this.focusWindow(id);
+    this.startPendingNavigation(id);
 
     const payload = browserWindow.bridgeStateReady
       ? await this.requestBridgePayload(id, "history_forward")
@@ -1683,8 +2301,6 @@ const model = {
     if (!payload) {
       this.performHistoryFallback(id, "forward");
     }
-
-    void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 2 });
   },
 
   async reloadFrame(id) {
@@ -1694,6 +2310,7 @@ const model = {
     }
 
     this.focusWindow(id);
+    this.startPendingNavigation(id);
 
     const payload = browserWindow.bridgeStateReady
       ? await this.requestBridgePayload(id, "location_reload")
@@ -1704,7 +2321,6 @@ const model = {
     }
 
     browserWindow.bridgeStateReady = false;
-    void this.syncNavigationState(id, { attempts: FRAME_SYNC_ATTEMPTS + 2 });
   }
 };
 

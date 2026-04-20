@@ -4,6 +4,7 @@ This doc covers the floating routed overlay agent as a frontend runtime surface.
 
 ## Primary Sources
 
+- `app/L0/_all/mod/_core/agent-chat/AGENTS.md`
 - `app/L0/_all/mod/_core/agent_prompt/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/prompts/AGENTS.md`
@@ -44,9 +45,12 @@ Important config fields:
 - `local_provider`
 - API endpoint, key, model, and params
 - `max_tokens`
+- `prompt_budget_ratios`
 - `huggingface_model`
 - `huggingface_dtype`
 - optional `custom_system_prompt`
+
+`prompt_budget_ratios` drives the shared prompt-budget builder: `system`, `history`, and `transient` split the configured `max_tokens`, while `singleMessage` caps any one live history message as a percentage of the history budget before part-level trimming runs. Prepared prompt entries and prompt items now carry cached token metadata so rebuilds can reuse counts for the same bodies. Part-level trimming then uses one shared planner pass: contributor trims must each be at least `250` tokens, and when that is not possible for `system` or `transient`, the runtime trims one combined section body instead of applying tiny contributor cuts.
 
 Important browser UI state fields:
 
@@ -63,7 +67,7 @@ Current defaults:
 - endpoint: `https://openrouter.ai/api/v1/chat/completions`
 - model: `anthropic/claude-sonnet-4.6`
 - params: `temperature: 0.2`
-- max tokens: `64000`
+- max tokens: `120000`
 - display mode: `compact`
 - first run with no `~/conf/onscreen-agent.yaml`: start with the compact avatar-plus-chat box horizontally centered, with its bottom edge targeting whichever is lower on screen: `7em` above the viewport bottom or `90%` of viewport height, instead of restoring browser-global position state
 
@@ -77,7 +81,7 @@ That namespace is the stable external entry point for:
 - triggering prompt submission from outside the module
 - handling guarded preset-button prompt submission for spaces and similar launchers without queueing over an already busy send loop
 
-The active chat surface also publishes the current prompt/history snapshot on `space.chat`.
+The active chat surface also publishes the current prompt/history snapshot on `space.chat`. That runtime surface now includes the live `promptItems` metadata list for the current prepared turn plus `readLongMessage({ id, from, to })`, which returns slices from the untrimmed text behind any placeholder-expanded prompt contributor for the current turn only.
 
 Boot timing is intentionally lazy now. Overlay init restores config, browser UI state, and saved history first, but it does not eagerly fetch the default firmware prompt, install onscreen skills, or assemble prompt input on plain page reload. Those prompt dependencies are loaded only on the first prompt-dependent action such as send, prompt-history open, or another explicit prompt rebuild.
 
@@ -101,13 +105,17 @@ That shared history styling resets rendered markdown bubbles back to normal whit
 The settings and prompt-history dialogs reuse the shared `_core/visual/forms/dialog.css` shell layout. Their header and footer rows stay fixed while only the settings body or prompt-history frame scrolls, so the footer actions remain reachable even when the content is long.
 
 Caught overlay runtime errors are logged through `console.error` and shown through the shared toast stack from `_core/visual/chrome/toast.js`. The composer placeholder still belongs to ready-state and lightweight status guidance, so raw exception text should not be pushed into the textarea placeholder.
-Overlay execution transcripts now use the shared YAML-first formatter for both console logs and returned values, emitting block headers such as `log↓`, `warn↓`, `error↓`, and `result↓` so structured telemetry stays complete across the thread and execution cards.
+Overlay execution transcripts now use the shared YAML-first formatter for both console logs and returned values, emitting block headers such as `log↓`, `warn↓`, `error↓`, and `result↓` so structured telemetry stays complete across the thread and execution cards. Immediately before those execution results are serialized back into the `execution-output` follow-up turn, the overlay also runs the shared assistant-message evaluation seam; the current first-party hook from `_core/agent-chat` prepends synthetic loop warnings when the exact same assistant message reappears, using `info` on the 2nd send, `warn` on the 3rd send, and `error` on the 4th send onward.
 
 The settings dialog now has two provider tabs named `API` and `Local`. `API` keeps the OpenAI-compatible endpoint, model, and key fields. `Local` mounts the shared Hugging Face config sidebar in onscreen mode, so the overlay reads the same saved-model list and live WebGPU worker state as the routed Local LLM page and the admin chat. Opening the Local tab should refresh saved-model shortcuts without booting the worker; saving local settings persists the selected repo id and dtype, then starts background model preparation. When no local model is selected and saved models exist, the Local panel preselects the browser-wide last successfully loaded saved model from `_core/huggingface/manager.js`, falling back to the first saved entry if that last-used entry was discarded. When no local model is selected, no local model is loaded, and the shared saved-model list is empty, the Local panel prefills the Hugging Face model field with the same testing-page default: `onnx-community/gemma-4-E4B-it-ONNX`.
 
 The API-key composer blocker applies only to the default API-provider configuration with no API key, where the composer shows a centered `Set LLM API key` action over the disabled textarea. Local Hugging Face mode can send without an API key and falls back to loading the selected local model on the first message if background preparation has not finished.
 
+The composer textarea itself stays borderless in both compact and full modes. Overlay-local CSS should neutralize native textarea appearance instead of introducing a second inner input frame inside the panel.
+
 Prompt assembly also reads the live overlay display mode through a module-local transient-section extension. In compact mode it appends a short lowercase `chat display mode` transient note: `chat is in compact mode` and `keep replies short unless more detail is needed for correctness or the user asks for it`. Full mode currently adds no display-mode transient note.
+
+The same module now adds a bounded `user home files` transient section built from a recursive `space.api.fileList("~/", true)` pass. That section omits `.git/` directories entirely, then renders the remaining current-user home paths as a simple indented tree with folders first, trailing `/` markers for folders, and explicit `# ... more folders` or `# ... more files` lines when the current defaults `maxDepth: 5`, `maxFoldersPerFolder: 20`, `maxFilesPerFolder: 20`, or `maxLines: 250` hide part of the tree.
 
 Preset launchers should use `space.onscreenAgent.submitExamplePrompt(...)` instead of `submitPrompt(...)` when they need strict “send now or refuse” behavior. That guarded helper opens the overlay, checks the live composer blocker state, shows `Don't forget to configure your LLM first.` through the overlay bubble when the default API-key overlay is blocking input, shows `I'm working on something...` when the overlay is already sending or executing or compacting, keeps that notice from being immediately replaced by compact streaming reply bubbles, and only then seeds the draft and submits. When a caller already knows the prompt is blocked and only wants the bubble, it can call `space.onscreenAgent.showExamplePromptInactiveBubble(...)` instead.
 
@@ -119,7 +127,7 @@ For remote API mode, `_core/onscreen_agent/api.js` now finalizes the upstream fe
 
 Local Hugging Face sends now use the same onscreen-agent prompt assembly path as remote API sends, so the firmware prompt, prompt includes, skill catalog, auto-loaded skill context, custom instructions, history, and transient context stay aligned across providers. The actual local-runtime request should still reuse the same folded transport messages that the API path would send upstream, while prompt inspection keeps showing the richer pre-fold prepared payload. The routed `/huggingface` testing page remains separate and uses only its local plain system-prompt-plus-chat surface.
 
-Dragging the astronaut past the left, right, or bottom viewport edge now first hits a dead zone at the in-screen clamp that matches the reveal-threshold distance so corner placement stays practical, then snaps the shell into a hidden peeking pose on that edge after the pointer crosses that extra distance. Top-edge hiding is disabled entirely. In the enabled hidden states the shell hide math follows the full rendered astronaut bounds and now keeps roughly 60 percent of the astronaut visible with one uniform inset. On fine-pointer desktops the drag hitbox stays the same size as the visible astronaut so the image cannot drift away from the interactive box. The normal right-side flip still applies while hidden, the hidden-state avatar image shadow is suppressed so the visible silhouette does not look larger on right or bottom hides than it does on the left, and the chat body collapses away while the hidden panel and history surfaces stop intercepting clicks or wheel scrolling until a click or drag back past the reveal threshold restores the previous compact or full chat body.
+Dragging the astronaut past the left, right, or bottom viewport edge now first hits a dead zone at the in-screen clamp that matches the reveal-threshold distance so corner placement stays practical, then snaps the shell into a hidden peeking pose on that edge after the pointer crosses that extra distance. Top-edge hiding is disabled entirely. In the enabled hidden states the shell hide math follows the full rendered astronaut bounds and now keeps roughly 60 percent of the astronaut visible with one uniform inset. On fine-pointer desktops the drag hitbox stays the same size as the visible astronaut so the image cannot drift away from the interactive box. The normal right-side flip still applies while hidden, the astronaut image itself now stays shadowless in every state so the visible silhouette matches across edges and in-screen placement, and the chat body collapses away while the hidden panel and history surfaces stop intercepting clicks or wheel scrolling until a click or drag back past the reveal threshold restores the previous compact or full chat body.
 
 The astronaut itself stays draggable and clickable, but its hitbox must not swallow page navigation. Wheel or trackpad scroll over the avatar now proxies to the underlying page or widget surface first, then falls back to native scroll chaining for the nearest scrollable ancestor, so the overlay can still be dragged without trapping viewport scrolling. The avatar keeps `touch-action: none` only for coarse-pointer touch devices; fine-pointer desktops leave native scroll gestures enabled over the astronaut.
 

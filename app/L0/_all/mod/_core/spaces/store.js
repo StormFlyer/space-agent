@@ -6,6 +6,7 @@ import {
   WIDGET_API_VERSION
 } from "/mod/_core/spaces/constants.js";
 import { createCurrentSpaceModuleImporter } from "/mod/_core/spaces/widget-import.js";
+import { buildCurrentSpaceContextTags } from "/mod/_core/spaces/prompt-context.js";
 import {
   buildCenteredFirstFitLayout,
   clampWidgetPosition,
@@ -2977,6 +2978,10 @@ const spacesModel = {
 
   get hasCurrentSpace() {
     return Boolean(this.currentSpace);
+  },
+
+  get currentSpaceContextTags() {
+    return buildCurrentSpaceContextTags(this.currentSpaceId);
   },
 
   get hasSpaces() {

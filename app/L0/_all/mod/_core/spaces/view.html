@@ -7,7 +7,7 @@
   </head>
   <body>
     <div x-data class="spaces-view-root">
-      <x-context :data-tags="$store.spacesPage?.hasCurrentSpace ? 'space:open' : ''"></x-context>
+      <x-context :data-tags="$store.spacesPage?.currentSpaceContextTags || ''"></x-context>
       <template x-if="$store.spacesPage?.hasCurrentSpace">
         <template x-inject='[id="_core/onscreen_menu/bar_start"]'>
           <div

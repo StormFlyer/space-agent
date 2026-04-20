@@ -22,10 +22,11 @@ Current public endpoints:
 Important notes:
 
 - these are the public auth and health endpoints; hosted-share endpoints are the other anonymous family
-- password login flows through the shared auth challenge/proof service when `LOGIN_ALLOWED=true`
+- password login flows through the shared auth challenge/proof service when `LOGIN_ALLOWED=true`, while guest-background flows may still use the guest-specific subset when `LOGIN_ALLOWED=false`
 - `login_challenge` also reports `userCrypto` bootstrap state; legacy accounts with no `meta/user_crypto.json` receive a one-time provisioning share so the browser can generate the missing wrapped record before final login, while accounts whose wrapped record no longer has any recoverable server share are reported as `invalidated`
 - `login` completes both the auth session and the `userCrypto` bootstrap: it may persist a missing `user_crypto.json` record before issuing the cookie, and successful responses return a backend `sessionId` plus the `userCrypto` payload needed to unlock the current browser session
-- `guest_create` creates a guest `L2` user only when runtime config allows guest accounts and password login remains enabled
+- `guest_create` creates a guest `L2` user whenever runtime config allows guest accounts, even when `LOGIN_ALLOWED=false`
+- `login_check` stays available even when `LOGIN_ALLOWED=false` so public guest-bootstrap and hosted-share flows can confirm that the issued session is ready before they navigate
 - in clustered runtime, login challenges are coordinated through the primary-only `login_challenge` area of the unified state system while workers still validate cookies and write `logins.json`
 
 ## Hosted Share And Import Endpoints

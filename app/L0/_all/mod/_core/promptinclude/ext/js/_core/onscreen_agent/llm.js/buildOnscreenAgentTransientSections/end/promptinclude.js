@@ -1,26 +1,24 @@
-import {
-  buildPromptIncludeTransientSection,
-  PROMPT_INCLUDE_TRANSIENT_KEY
-} from "/mod/_core/promptinclude/promptinclude.js";
+import { mergePromptItemMaps } from "/mod/_core/agent_prompt/prompt-items.js";
+import { buildPromptIncludeTransientItems } from "/mod/_core/promptinclude/promptinclude.js";
 
 export default async function injectPromptIncludeTransientSection(hookContext) {
   const promptContext = hookContext?.result;
 
-  if (!promptContext || !Array.isArray(promptContext.sections)) {
+  if (!promptContext) {
     return;
   }
 
-  const promptIncludeTransientSection = await buildPromptIncludeTransientSection().catch((error) => {
-    console.error("Unable to build prompt include transient section.", error);
-    return null;
+  const promptIncludeTransientItems = await buildPromptIncludeTransientItems().catch((error) => {
+    console.error("Unable to build prompt include transient items.", error);
+    return {};
   });
 
-  if (!promptIncludeTransientSection) {
+  if (!Object.keys(promptIncludeTransientItems).length) {
     return;
   }
 
-  promptContext.promptIncludeTransientSection = promptIncludeTransientSection;
-  promptContext.sections = promptContext.sections
-    .filter((section) => String(section?.key || "").trim() !== PROMPT_INCLUDE_TRANSIENT_KEY)
-    .concat(promptIncludeTransientSection);
+  promptContext.promptIncludeTransientItems = {
+    ...promptIncludeTransientItems
+  };
+  promptContext.transientItems = mergePromptItemMaps(promptContext.transientItems, promptIncludeTransientItems);
 }

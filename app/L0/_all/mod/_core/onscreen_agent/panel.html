@@ -370,9 +370,70 @@
                       <span>Max Tokens</span>
                       <input type="number" min="1" step="1" inputmode="numeric" x-model="$store.onscreenAgent.settingsDraft.maxTokens" />
                       <p class="field-note">
-                        Shared across both provider modes. Default <code>64000</code>. When prompt history exceeds this, compaction runs automatically before the next send.
+                        Shared across both provider modes. Default <code>120000</code>. When prompt history exceeds this, compaction runs automatically before the next send.
                       </p>
                     </label>
+                    <div class="field prompt-budget-field">
+                      <span>Prompt Budget</span>
+                      <div class="prompt-budget-preview" aria-hidden="true">
+                        <template x-for="segment in $store.onscreenAgent.settingsDraftPromptBudgetSegments" :key="segment.key">
+                          <span
+                            class="prompt-budget-segment"
+                            :class="segment.colorClass"
+                            :style="`width:${segment.value}%`"
+                          ></span>
+                        </template>
+                      </div>
+                      <div class="prompt-budget-grid">
+                        <label class="prompt-budget-control">
+                          <span>System <strong x-text="`${$store.onscreenAgent.settingsDraftPromptBudgetRatios.system}%`"></strong></span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            :value="$store.onscreenAgent.settingsDraftPromptBudgetRatios.system"
+                            @input="$store.onscreenAgent.setSettingsPromptBudgetRatio('system', $event.target.value)"
+                          />
+                        </label>
+                        <label class="prompt-budget-control">
+                          <span>History <strong x-text="`${$store.onscreenAgent.settingsDraftPromptBudgetRatios.history}%`"></strong></span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            :value="$store.onscreenAgent.settingsDraftPromptBudgetRatios.history"
+                            @input="$store.onscreenAgent.setSettingsPromptBudgetRatio('history', $event.target.value)"
+                          />
+                        </label>
+                        <label class="prompt-budget-control">
+                          <span>Transient <strong x-text="`${$store.onscreenAgent.settingsDraftPromptBudgetRatios.transient}%`"></strong></span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            :value="$store.onscreenAgent.settingsDraftPromptBudgetRatios.transient"
+                            @input="$store.onscreenAgent.setSettingsPromptBudgetRatio('transient', $event.target.value)"
+                          />
+                        </label>
+                        <label class="prompt-budget-control prompt-budget-control-single">
+                          <span>Single History Message <strong x-text="`${$store.onscreenAgent.settingsDraftPromptBudgetRatios.singleMessage}%`"></strong></span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            :value="$store.onscreenAgent.settingsDraftPromptBudgetRatios.singleMessage"
+                            @input="$store.onscreenAgent.setSettingsSingleMessagePromptBudgetRatio($event.target.value)"
+                          />
+                        </label>
+                      </div>
+                      <p class="field-note">
+                        System, history, and transient rebalance to 100% of <code>max tokens</code>. Single history message is a percentage of the history budget.
+                      </p>
+                    </div>
                     <label class="field">
                       <span>Params</span>
                       <textarea

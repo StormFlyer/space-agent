@@ -81,6 +81,8 @@ App docs:
 - `/app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 - `/app/L0/_all/mod/_core/admin/views/time_travel/AGENTS.md`
 - `/app/L0/_all/mod/_core/agent/AGENTS.md`
+- `/app/L0/_all/mod/_core/agent-chat/AGENTS.md`
+- `/app/L0/_all/mod/_core/agent_prompt/AGENTS.md`
 - `/app/L0/_all/mod/_core/dashboard/AGENTS.md`
 - `/app/L0/_all/mod/_core/dashboard_welcome/AGENTS.md`
 - `/app/L0/_all/mod/_core/documentation/AGENTS.md`
@@ -130,6 +132,7 @@ Server docs:
 Test docs:
 - `/tests/AGENTS.md`
 - `/tests/agent_llm_performance/AGENTS.md`
+- `/tests/browser_component_harness/AGENTS.md`
 
 ## Programming Guide
 

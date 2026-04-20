@@ -13,6 +13,10 @@ This doc covers the spaces runtime because it is one of the most important agent
 - `app/L0/_all/mod/_core/spaces/onboarding/examples/`
 - `app/L0/_all/mod/_core/spaces/onboarding/first-login-onboarding.js`
 - `app/L0/_all/mod/_core/spaces/ext/skills/spaces/SKILL.md`
+- `app/L0/_all/mod/_core/spaces/ext/skills/space-widgets/SKILL.md`
+- `app/L0/_all/mod/_core/spaces/ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections/end/available-spaces.js`
+- `app/L0/_all/mod/_core/spaces/ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections/end/current-space-widgets.js`
+- `app/L0/_all/mod/_core/spaces/prompt-context.js`
 - `app/L0/_all/mod/_core/spaces/storage.js`
 - `app/L0/_all/mod/_core/spaces/store.js`
 - `app/L0/_all/mod/_core/spaces/view.html`
@@ -37,7 +41,7 @@ Important rules:
 - new spaces start empty
 - on first login, `_core/spaces` uses the shared `_core/login_hooks/first_login` seam to copy or reuse the bundled `_core/spaces/onboarding/onboarding_space/` template, whose `space.yaml` owns the `Big Bang` title, icon, color, and onboarding instructions, then on the main `/` shell rewrites the initial route so the router lands in that space instead of the default dashboard
 - on the dashboard, `_core/spaces` now exposes the same create flow through both the spaces launcher and the always-available `New Space` topbar action injected through `_core/dashboard/topbar_primary`, so either entry point creates an empty space and opens it as a new route history entry
-- while the spaces page is mounted with a current space, `view.html` exports a hidden `space:open` context tag on top of the framework-owned runtime context that already exposes `runtime-browser` or `runtime-app`
+- while the spaces page is mounted with a current space, `view.html` exports hidden `space:open` and `space:id:<id>` context tags on top of the framework-owned runtime context that already exposes `runtime-browser` or `runtime-app`
 - widget ids come from widget filenames
 - the manifest should not invent fake untitled titles
 - widget source is now YAML-first; old `widgets/*.js` files are migration input only
@@ -142,6 +146,7 @@ Rules:
 - keep the empty-space onboarding stack starting near the top of the routed page with regular route-style top padding instead of floating around the viewport midpoint, and keep the gap between the example-button row and the CTA copy tight enough that the text reads directly beneath the examples
 - keep the empty-space runtime under `_core/spaces/onboarding/`: `_core/spaces/onboarding/empty-canvas.js` owns the DOM and animation wiring, `_core/spaces/onboarding/empty-canvas.css` owns the empty-space and loading-canvas presentation, and the first-login bootstrap plus bundled onboarding space also live in that folder
 - load the example buttons from `_core/spaces/onboarding/empty-canvas-examples.yaml` instead of a hardcoded prompt array; each entry supplies visible button text, may also supply a separate submitted `prompt` string for chat launches, plus icon, color, and a JavaScript click body compiled by `_core/spaces/onboarding/empty-canvas-examples.js`
+- keep example-button hover and focus feedback hitbox-stable; use border, background, outline, or opacity changes instead of translate-based lift so the pointer does not slip off the button when entering from an edge
 - keep that example-button catalog curated rather than exhaustive; weather should stay available through bundled presets such as `Daily News` or by asking the agent directly, not as a separate standalone top-level example card
 - the top-left weather chat example should read `Create a weather report` and send a short instruction that tells the agent to get approximate location from `https://ipapi.co/json/`, avoid exact browser geolocation, fetch weather from `https://api.met.no/weatherapi/locationforecast/2.0/compact`, use the shared `pdf-report` skill to create and download a browser PDF report with report-specific structure and styling instead of a canned template, and end with a brief weather summary reply
 - the center chat example should keep the visible label `Flip the space` but send `Rotate the whole page by another 180 degrees from whatever its current rotation is. Do not reset it to an absolute orientation or reuse the same fixed transform value; preserve the current rotation state and add 180 degrees with a two-second CSS transition.` so repeated launches ask for a cumulative re-flip instead of the same absolute transform
@@ -214,6 +219,16 @@ The framework owns the outer card and the responsive grid. Widgets own only thei
 
 ## Agent Workflow
 
+The spaces runtime now splits always-on space-management guidance from in-space widget guidance.
+
+Prompt context:
+
+- the top-level `spaces` skill auto-loads always and covers opening, creating, removing, and editing spaces
+- the top-level `space-widgets` skill auto-loads only while the page also exports `space:open` and covers current-space widget authoring
+- the spaces module also appends an `Available Spaces` transient section with compact `id|title` rows on every prompt build
+- when a current space is open, the route appends `Current Space Widgets` with compact `id|name|col|row|cols|rows|state|render status` rows
+- after widget writes or reloads, the runtime still appends `Current Widget` as the last edited widget envelope with `rendered↓` and `source↓`
+
 The spaces runtime is designed around staged turns.
 
 Normal flow:
@@ -230,7 +245,7 @@ Important protocol rules:
 - `readWidget(...)` returns numbered renderer lines for patch targeting
 - those numeric prefixes are display-only targets, not source text
 - prompt-side readbacks land in `_____framework` or `_____transient`
-- the first-party `spaces` skill is eligible only while the router exports `route:spaces`, and it becomes auto-loaded only while the page exports `space:open`
+- the first-party `spaces` skill is eligible and auto-loaded unconditionally, while the first-party `space-widgets` skill is eligible and auto-loaded only while the page exports `space:open`
 
 ## When To Read More
 

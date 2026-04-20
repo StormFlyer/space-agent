@@ -101,7 +101,7 @@ test("framework context helpers collect contexts, attributes, contents, and tags
   document.body.appendChild(overlayContext);
 
   const routeContext = document.createElement("x-context");
-  routeContext.setAttribute("data-tags", "route:spaces, space:open");
+  routeContext.setAttribute("data-tags", "route:spaces space:open space:id:space-7");
   routeContext.setAttribute("data-surface", "route");
   routeContext.textContent = "route";
   document.body.appendChild(routeContext);
@@ -109,8 +109,8 @@ test("framework context helpers collect contexts, attributes, contents, and tags
   assert.equal(getContexts(document).length, 2);
   assert.deepEqual(getAttributeValues("data-surface", document), ["chat", "route"]);
   assert.deepEqual(getContents(document), ["overlay", "route"]);
-  assert.deepEqual(getTags(document), ["onscreen", "route:spaces", "space:open"]);
-  assert.deepEqual(normalizeSkillTags(getTags(document)), ["onscreen", "route:spaces", "space:open"]);
+  assert.deepEqual(getTags(document), ["onscreen", "route:spaces", "space:id:space-7", "space:open"]);
+  assert.deepEqual(normalizeSkillTags(getTags(document)), ["onscreen", "route:spaces", "space:id:space-7", "space:open"]);
 });
 
 test("runtime context defaults to browser without a desktop bridge", async () => {

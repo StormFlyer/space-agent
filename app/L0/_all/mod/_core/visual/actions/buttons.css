@@ -21,7 +21,7 @@
     var(--color-accent-primary-strong)
   );
   --space-button-primary-bg-hover: linear-gradient(135deg, #8fe6ff, #a8c9ff);
-  --space-button-primary-shadow: 0 16px 34px rgba(125, 220, 255, 0.18);
+  --space-button-primary-shadow: none;
   --space-button-confirm-color: var(--color-accent-ink);
   --space-button-confirm-bg: linear-gradient(
     135deg,
@@ -29,7 +29,7 @@
     var(--color-accent-primary-strong)
   );
   --space-button-confirm-bg-hover: linear-gradient(135deg, #8fe6ff, #a8c9ff);
-  --space-button-confirm-shadow: 0 16px 34px rgba(125, 220, 255, 0.18);
+  --space-button-confirm-shadow: none;
 }
 
 .primary-button,

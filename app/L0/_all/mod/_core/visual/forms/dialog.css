@@ -338,6 +338,59 @@
   background: var(--space-inline-code-bg);
 }
 
+.prompt-budget-field {
+  gap: 0.75rem;
+}
+
+.prompt-budget-preview {
+  display: flex;
+  width: 100%;
+  height: 0.72rem;
+  overflow: hidden;
+  border: 1px solid var(--space-field-border);
+  border-radius: 999px;
+  background: rgba(10, 16, 30, 0.72);
+}
+
+.prompt-budget-segment {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+
+.prompt-budget-segment-system {
+  background: rgba(182, 190, 199, 0.82);
+}
+
+.prompt-budget-segment-history {
+  background: rgba(109, 170, 255, 0.82);
+}
+
+.prompt-budget-segment-transient {
+  background: rgba(108, 214, 162, 0.82);
+}
+
+.prompt-budget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.8rem;
+}
+
+.prompt-budget-control {
+  display: grid;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.prompt-budget-control input[type="range"] {
+  width: 100%;
+  margin: 0;
+}
+
+.prompt-budget-control-single {
+  grid-column: 1 / -1;
+}
+
 .dialog-note {
   margin: 1rem 0 0;
   font-size: 0.92rem;

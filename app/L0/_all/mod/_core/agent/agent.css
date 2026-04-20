@@ -110,9 +110,6 @@
   opacity: 0.95;
   pointer-events: none;
   user-select: none;
-  filter:
-    drop-shadow(0 14px 28px rgba(0, 0, 0, 0.32))
-    drop-shadow(0 0 22px rgba(148, 188, 255, 0.16));
   animation: agent-page-avatar-float 12.4s ease-in-out infinite;
   transform-origin: 52% 56%;
 }

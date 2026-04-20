@@ -1,7 +1,9 @@
+import { DEFAULT_PROMPT_BUDGET_RATIOS, normalizePromptBudgetRatios } from "/mod/_core/agent_prompt/prompt-items.js";
+
 export const ONSCREEN_AGENT_CONFIG_PATH = "~/conf/onscreen-agent.yaml";
 export const ONSCREEN_AGENT_HISTORY_PATH = "~/hist/onscreen-agent.json";
 export const ONSCREEN_AGENT_UI_STATE_STORAGE_KEY = "space.onscreenAgent.uiState";
-export const DEFAULT_ONSCREEN_AGENT_MAX_TOKENS = 64_000;
+export const DEFAULT_ONSCREEN_AGENT_MAX_TOKENS = 120_000;
 export const ONSCREEN_AGENT_LLM_PROVIDER = Object.freeze({
   API: "api",
   LOCAL: "local"
@@ -25,6 +27,7 @@ export const DEFAULT_ONSCREEN_AGENT_SETTINGS = {
   maxTokens: DEFAULT_ONSCREEN_AGENT_MAX_TOKENS,
   model: "anthropic/claude-sonnet-4.6",
   paramsText: "temperature:0.2",
+  promptBudgetRatios: { ...DEFAULT_PROMPT_BUDGET_RATIOS },
   provider: ONSCREEN_AGENT_LLM_PROVIDER.API
 };
 
@@ -160,6 +163,10 @@ export function normalizeOnscreenAgentMaxTokens(value) {
   } catch {
     return DEFAULT_ONSCREEN_AGENT_MAX_TOKENS;
   }
+}
+
+export function normalizeOnscreenAgentPromptBudgetRatios(value = {}) {
+  return normalizePromptBudgetRatios(value);
 }
 
 export function formatOnscreenAgentTokenCount(tokenCount) {

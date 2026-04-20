@@ -203,8 +203,8 @@ Only params with `frontend_exposed: true` are injected into page-shell meta tags
 - `PORT`: accepts `0` when a caller wants the OS to assign a free local port at startup
 - `WORKERS`: number of parallel HTTP worker processes for `serve` and `supervise`; `1` keeps the single-process runtime, and larger values start a clustered primary plus worker model with one authoritative replicated state host
 - `SINGLE_USER_APP`: implicit always-authenticated `user` principal with virtual `_admin` access
-- `ALLOW_GUEST_USERS`: enables guest creation from the login screen when password login is enabled
-- `LOGIN_ALLOWED`: enables or disables the password-login endpoints and login form while leaving the public `/login` shell available as a landing page with disabled-copy fallback
+- `ALLOW_GUEST_USERS`: enables guest creation and guest-backed public share flows
+- `LOGIN_ALLOWED`: enables or disables the normal password-login entry path and login form while leaving the public `/login` shell available as a landing page with disabled-copy fallback; guest-background session flows may still run when guest users are allowed
 - `CLOUD_SHARE_ALLOWED`: enables the hosted-share receiver endpoints on the server that stores public share archives; defaults to `false` and requires guest users plus `CUSTOMWARE_PATH`
 - `CLOUD_SHARE_URL`: the hosted-share receiver base URL used by the spaces share modal for uploads and by the receiver when generating returned share links; defaults to `share.space-agent.ai` and is frontend-exposed
 - `CUSTOMWARE_GIT_HISTORY`: enables optional debounced local Git history repositories for writable `L1/<group>/` and `L2/<user>/` roots; defaults to `true`; owner-root commits wait 10 seconds of quiet, then shorten to 5 seconds after 1 minute of pending writes, 1 second after 5 minutes, and immediate commit after 10 minutes; with `WORKERS>1`, those debounced commits are scheduled only by the clustered primary after it rebuilds authoritative state for worker-reported path changes

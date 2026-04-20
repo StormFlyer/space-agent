@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildPromptIncludeSystemPromptItems,
   buildPromptIncludeSystemPromptSection,
   buildPromptIncludeSystemPromptSections,
+  buildPromptIncludeTransientItems,
   buildPromptIncludeTransientSection,
   listPromptIncludePaths,
   SYSTEM_PROMPT_INCLUDE_FILE_PATTERN,
@@ -136,6 +138,72 @@ test("buildPromptIncludeSystemPromptSections reads system include files after th
   ]);
 });
 
+test("buildPromptIncludeSystemPromptItems returns keyed ordered prompt items", async (testContext) => {
+  withStubbedSpace(testContext, {
+    api: {
+      async call(endpointName, options) {
+        assert.equal(endpointName, "file_paths");
+        assert.equal(options?.method, "POST");
+        assert.deepEqual(options?.body, {
+          patterns: [SYSTEM_PROMPT_INCLUDE_FILE_PATTERN]
+        });
+
+        return {
+          [SYSTEM_PROMPT_INCLUDE_FILE_PATTERN]: [
+            "L2/usr/workdir/z-last.system.include.md",
+            "L2/usr/workdir/a-first.system.include.md"
+          ]
+        };
+      },
+      async fileRead(options) {
+        assert.deepEqual(options, {
+          files: [
+            "L2/usr/workdir/a-first.system.include.md",
+            "L2/usr/workdir/z-last.system.include.md"
+          ]
+        });
+
+        return {
+          files: [
+            {
+              path: "L2/usr/workdir/z-last.system.include.md",
+              content: "second rule"
+            },
+            {
+              path: "L2/usr/workdir/a-first.system.include.md",
+              content: "first rule"
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  const systemPromptItems = await buildPromptIncludeSystemPromptItems();
+
+  assert.deepEqual(systemPromptItems, {
+    "promptinclude:instructions": {
+      order: 140,
+      trimAllowed: false,
+      value: buildPromptIncludeSystemPromptSection()
+    },
+    "promptinclude:system:L2/usr/workdir/a-first.system.include.md": {
+      order: 150,
+      sourcePath: "L2/usr/workdir/a-first.system.include.md",
+      trimAllowed: undefined,
+      trimPriority: 30,
+      value: "first rule"
+    },
+    "promptinclude:system:L2/usr/workdir/z-last.system.include.md": {
+      order: 151,
+      sourcePath: "L2/usr/workdir/z-last.system.include.md",
+      trimAllowed: undefined,
+      trimPriority: 30,
+      value: "second rule"
+    }
+  });
+});
+
 test("buildPromptIncludeTransientSection reads transient include files and formats one fenced block per include", async (testContext) => {
   withStubbedSpace(testContext, {
     api: {
@@ -194,5 +262,45 @@ test("buildPromptIncludeTransientSection reads transient include files and forma
     heading: "prompt includes",
     key: "prompt-includes",
     order: 0
+  });
+});
+
+test("buildPromptIncludeTransientItems returns keyed prompt items and preserves explicit metadata", async () => {
+  const transientItems = await buildPromptIncludeTransientItems({
+    entries: [
+      {
+        content: "first body",
+        heading: "Custom heading",
+        key: "custom-transient-item",
+        order: 222,
+        path: "L2/usr/workdir/custom.transient.include.md",
+        trimAllowed: false,
+        trimPriority: 7
+      },
+      {
+        content: "second body",
+        path: "L2/usr/workdir/second.transient.include.md"
+      }
+    ],
+    order: 90
+  });
+
+  assert.deepEqual(transientItems, {
+    "custom-transient-item": {
+      heading: "Custom heading",
+      order: 222,
+      sourcePath: "L2/usr/workdir/custom.transient.include.md",
+      trimAllowed: false,
+      trimPriority: 7,
+      value: "```\nfirst body\n```"
+    },
+    "promptinclude:transient:L2/usr/workdir/second.transient.include.md": {
+      heading: "/L2/usr/workdir/second.transient.include.md",
+      order: 91,
+      sourcePath: "L2/usr/workdir/second.transient.include.md",
+      trimAllowed: undefined,
+      trimPriority: 30,
+      value: "```\nsecond body\n```"
+    }
   });
 });

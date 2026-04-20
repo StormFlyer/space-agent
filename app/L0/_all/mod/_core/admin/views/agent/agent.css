@@ -399,6 +399,12 @@
   line-height: 1.6;
 }
 
+.chat-composer textarea:focus,
+.chat-composer textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0;
+}
+
 .composer-attachments {
   margin-top: 10px;
 }

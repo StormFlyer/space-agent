@@ -1,4 +1,4 @@
-import { isLoginAllowed, isSingleUserApp } from "../lib/utils/runtime_params.js";
+import { isSingleUserApp } from "../lib/utils/runtime_params.js";
 import { runTrackedMutation } from "../runtime/request_mutations.js";
 
 export const allowAnonymous = true;
@@ -28,10 +28,6 @@ async function waitForMinimumDuration(startedAtMs, minimumDurationMs) {
 export async function post(context) {
   if (isSingleUserApp(context.runtimeParams)) {
     throw createHttpError("Password login is disabled in single-user mode.", 403);
-  }
-
-  if (!isLoginAllowed(context.runtimeParams)) {
-    throw createHttpError("Login is disabled in this system.", 403);
   }
 
   const startedAtMs = Date.now();

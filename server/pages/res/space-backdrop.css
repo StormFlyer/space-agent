@@ -237,9 +237,6 @@ body.space-theme-canvas::before {
     rgba(255, 255, 255, 0.96) 100%
   );
   transform-origin: right center;
-  filter:
-    drop-shadow(0 0 6px rgba(255, 255, 255, 0.5))
-    drop-shadow(0 0 18px rgba(148, 188, 255, 0.22));
   opacity: 0;
   will-change: transform, opacity;
 }

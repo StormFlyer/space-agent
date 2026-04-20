@@ -1936,7 +1936,8 @@ function createWindow() {
     webPreferences.preload = DESKTOP_BROWSER_WEBVIEW_PRELOAD_PATH;
     webPreferences.contextIsolation = true;
     webPreferences.nodeIntegration = false;
-    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInSubFrames = true;
+    webPreferences.sandbox = false;
     webPreferences.additionalArguments = [
       ...(Array.isArray(webPreferences.additionalArguments) ? webPreferences.additionalArguments : []),
       `--space-browser-id=${browserId}`

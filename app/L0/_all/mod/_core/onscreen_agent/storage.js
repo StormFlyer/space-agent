@@ -27,9 +27,40 @@ function normalizeStoredCoordinate(value) {
   return null;
 }
 
+function normalizeStoredPromptBudgetRatios(storedConfig = {}) {
+  const storedRatios =
+    storedConfig.prompt_budget_ratios ||
+    storedConfig.promptBudgetRatios ||
+    {};
+  const source = storedRatios && typeof storedRatios === "object" ? storedRatios : {};
+
+  return config.normalizeOnscreenAgentPromptBudgetRatios({
+    history:
+      source.history ??
+      storedConfig.history_prompt_max_ratio ??
+      storedConfig.historyPromptMaxRatio,
+    singleMessage:
+      source.single_message ??
+      source.singleMessage ??
+      storedConfig.single_message_max_ratio ??
+      storedConfig.singleMessageMaxRatio,
+    system:
+      source.system ??
+      storedConfig.system_prompt_max_ratio ??
+      storedConfig.systemPromptMaxRatio,
+    transient:
+      source.transient ??
+      storedConfig.transient_prompt_max_ratio ??
+      storedConfig.transientPromptMaxRatio
+  });
+}
+
 function createDefaultConfig() {
   return {
-    settings: { ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS },
+    settings: {
+      ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS,
+      promptBudgetRatios: { ...config.DEFAULT_ONSCREEN_AGENT_SETTINGS.promptBudgetRatios }
+    },
     systemPrompt: "",
     agentX: null,
     agentY: null,
@@ -181,6 +212,7 @@ async function normalizeStoredConfig(runtime, parsedConfig) {
       maxTokens: config.normalizeOnscreenAgentMaxTokens(storedMaxTokens),
       model: String(storedConfig.model || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.model || "").trim(),
       paramsText: String(storedConfig.params || storedConfig.paramsText || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText || "").trim(),
+      promptBudgetRatios: normalizeStoredPromptBudgetRatios(storedConfig),
       provider,
       storedApiKeyLocked: storedApiKey.locked,
       storedApiKeyValue: storedApiKey.storedValue
@@ -234,7 +266,13 @@ async function buildStoredConfigPayload(runtime, { settings, systemPrompt }) {
     llm_provider: config.normalizeOnscreenAgentLlmProvider(settings?.provider),
     max_tokens: config.normalizeOnscreenAgentMaxTokens(settings?.maxTokens),
     model: String(settings?.model || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.model || "").trim(),
-    params: String(settings?.paramsText || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText || "").trim()
+    params: String(settings?.paramsText || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText || "").trim(),
+    prompt_budget_ratios: {
+      history: config.normalizeOnscreenAgentPromptBudgetRatios(settings?.promptBudgetRatios).history,
+      single_message: config.normalizeOnscreenAgentPromptBudgetRatios(settings?.promptBudgetRatios).singleMessage,
+      system: config.normalizeOnscreenAgentPromptBudgetRatios(settings?.promptBudgetRatios).system,
+      transient: config.normalizeOnscreenAgentPromptBudgetRatios(settings?.promptBudgetRatios).transient
+    }
   };
 
   if (normalizedSystemPrompt) {

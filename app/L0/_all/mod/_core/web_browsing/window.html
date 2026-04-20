@@ -16,6 +16,7 @@
       @pointercancel.window="$store.webBrowsing.stopPointer($event)"
       @resize.window="$store.webBrowsing.handleViewportResize()"
     >
+      <x-context :data-tags="$store.webBrowsing.hasOpenWindows ? 'browser:open' : ''"></x-context>
       <template x-for="browserWindow in $store.webBrowsing.windows" :key="browserWindow.id">
         <section
           class="web-browsing-window"

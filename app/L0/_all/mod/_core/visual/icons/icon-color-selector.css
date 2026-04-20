@@ -287,8 +287,7 @@
   transition:
     border-color 140ms ease,
     background-color 140ms ease,
-    color 140ms ease,
-    transform 140ms ease;
+    color 140ms ease;
 }
 
 .visual-icon-selector-option:hover,
@@ -298,7 +297,6 @@
   background: rgba(19, 32, 51, 0.78);
   color: var(--color-text-primary);
   outline: none;
-  transform: translateY(-1px);
 }
 
 .visual-icon-selector-option-icon {

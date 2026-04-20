@@ -1,4 +1,5 @@
-import { isLoginAllowed, isSingleUserApp } from "../lib/utils/runtime_params.js";
+import { isGuestUsername } from "../lib/auth/user_manage.js";
+import { areGuestUsersAllowed, isLoginAllowed, isSingleUserApp } from "../lib/utils/runtime_params.js";
 
 export const allowAnonymous = true;
 
@@ -13,14 +14,18 @@ export async function post(context) {
     throw createHttpError("Password login is disabled in single-user mode.", 403);
   }
 
-  if (!isLoginAllowed(context.runtimeParams)) {
-    throw createHttpError("Login is disabled in this system.", 403);
-  }
-
   const payload =
     context.body && typeof context.body === "object" && !Buffer.isBuffer(context.body)
       ? context.body
       : {};
+
+  if (!isLoginAllowed(context.runtimeParams)) {
+    const username = String(payload.username || "");
+
+    if (!(areGuestUsersAllowed(context.runtimeParams) && isGuestUsername(username))) {
+      throw createHttpError("Login is disabled in this system.", 403);
+    }
+  }
 
   try {
     return await context.auth.createLoginChallenge({

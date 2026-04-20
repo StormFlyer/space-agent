@@ -35,11 +35,13 @@ Current first-party context examples:
 - `_core/onscreen_agent/panel.html` exports `onscreen`
 - `_core/admin/views/shell/shell.html` exports `admin`
 - `_core/router/view.html` exports `route:<current-path>`
-- `_core/spaces/view.html` exports `space:open` when a current space is active
+- `_core/spaces/view.html` exports `space:open` plus `space:id:<id>` when a current space is active
+- `_core/web_browsing/window.html` exports `browser:open` while at least one browser window is open
 
 Examples:
 
 - `ext/skills/documentation/SKILL.md` -> `documentation`
+- `ext/skills/browser-manager/SKILL.md` -> `browser-manager`
 - `ext/skills/browser-control/SKILL.md` -> `browser-control`
 - `ext/skills/development/modules-routing/SKILL.md` -> `development/modules-routing`
 
@@ -71,26 +73,32 @@ Conflict rules:
 Current repo-owned shared top-level skills include:
 
 - `development`
+- `browser-manager`
 - `browser-control`
 - `memory`
 - `file-download`
 - `pdf-report`
 - `spaces`
+- `space-widgets`
 - `screenshots`
 - `user-management`
 - `documentation`
 
 Additional group-scoped skills may exist for narrower audiences.
 
-Some of those first-party ids are still gated by live context tags. For example, the shared `file-download` and `user-management` skills require `onscreen`, while `spaces` requires `route:spaces`. Skills may also target the framework-owned `runtime-browser` or `runtime-app` tags when their instructions depend on a normal web session versus the packaged desktop runtime. The shared `development` skill is the main frontend-development router and is intentionally not tag-gated, so it remains visible and auto-included as the stable index for its nested development skills. The first-party `memory` skill is also top-level and auto-loaded, and it keeps the prompt-include-backed `~/memory/` convention in model context without needing any special-case prompt-builder code.
+Some of those first-party ids are still gated by live context tags. For example, the shared `file-download`, `user-management`, and `browser-manager` skills require `onscreen`, `space-widgets` requires `space:open`, and `browser-control` auto-loads when `browser:open` is present on an onscreen surface. Skills may also target the framework-owned `runtime-browser` or `runtime-app` tags when their instructions depend on a normal web session versus the packaged desktop runtime. The shared `development` skill is the main frontend-development router and is intentionally not tag-gated, so it remains visible and auto-included as the stable index for its nested development skills. The first-party `memory` skill is also top-level and auto-loaded, and it keeps the prompt-include-backed `~/memory/` convention in model context without needing any special-case prompt-builder code. The first-party `spaces` skill is also top-level and auto-loaded without a tag gate.
 
 The first-party `development` tree is intentionally split into narrower nested skills. The top-level `development` skill is the always-included router for that tree: it should stay concise, but it must keep one visible subsection per nested development skill so agents can choose the right follow-up skill quickly.
 
 In particular, `development/modules-routing` now teaches custom routed pages as the main alternative to spaces when the user wants a reusable feature surface, shows how to publish dashboard panels through `ext/panels/*.yaml`, and points agents at the importable helper script `/mod/_core/skillset/ext/skills/development/modules-routing/panel-tools.js` instead of pasting one-off browser snippets into the skill text.
 
-The top-level `browser-control` skill is the focused reference for `_core/web_browsing` runtime control. It teaches the `space.browser` namespace, the public numeric browser-id convention, the navigate-the-web workflow of open-or-navigate first then act on refs, frontmost-window lookup, per-window handles, `sync()` readiness after navigation, the convenience wrappers `dom(...)`, `content(...)`, and `detail(...)`, the current browser-frame bridge request types such as `ping`, `dom`, stateful reference-marked `content`, `detail`, `click`, `type`, `submit`, `type_submit`, `scroll`, `navigation_state_get`, `location_navigate`, `history_back`, `history_forward`, and `location_reload`, and the shared availability stub that returns a warning object in plain browser runtime instead of attempting native-app-only browser actions. It should also make clear that requests like open a browser, go to Google, or visit another website mean use this skill to open or navigate a stand-alone browser window, not leave the current runtime page through `window.location` or related location writes, and that `typeSubmit(...)` means type then press Enter in the field.
+The top-level `browser-manager` skill is the short onscreen browser-window guide. It auto-loads on onscreen surfaces, covers opening and closing stand-alone browser windows through the top-level numeric-id `space.browser` helpers, relies on the `currently open web browsers` transient section for the compact `browser id|url|title` readback, and hands in-browser page work off to `browser-control` once a browser window is open.
 
-The top-level `spaces` skill is the primary widget-authoring guide for routed spaces work. It teaches the staged `readWidget(...)` and `patchWidget(...)` and `renderWidget(...)` flow, the preferred renderer shape `async (parent, currentSpace, context) => { ... }`, and `context.import("scripts/...")` as the current-space module split for shared state, cross-widget communication, space-global helpers, and large widget logic.
+The top-level `browser-control` skill is the full onscreen browser-automation guide. It auto-loads when the onscreen page also exports `browser:open`, focuses on the top-level numeric-id `space.browser` navigation and inspection helpers plus ref-based page interaction for already-open browser windows, relies on the `currently open web browsers` and `last interacted web browser` transient sections, does not teach per-window handles or an explicit `sync(...)` step, keeps `typeSubmit(...)` defined as type then press Enter in the same field, teaches the lean-token capture rule that `content(...)` uses typed ref boxes such as `[disabled muted button 18]`, `[checked checkbox 7]`, `[image 24]`, or `[input text 30]`, omits link destinations and label quotes by default, suppresses list bullets while keeping indentation, gives images actionable refs, falls back to truncated URL text for otherwise-empty links or images, and treats those state or semantic tags as best-effort hints that can be suppressed with `includeStateTags: false` or `includeSemanticTags: false` when flatter output matters. The skill also teaches that ref-targeted actions return `{ action, state }` and that `action.status.noObservedEffect` is the main stop-and-reinspect signal for loops, while `detail(id, ref)` remains the preferred way to inspect one link target, image source, DOM target, or control state on demand.
+
+The top-level `spaces` skill is the always-loaded guide for space selection and `space.yaml` work. It stays concise, covers opening and creating and removing spaces plus editing the space file, and relies on the `Available Spaces` transient section for the compact `id|title` readback.
+
+The top-level `space-widgets` skill is the in-space widget-authoring guide. It auto-loads only on `space:open`, teaches the staged `readWidget(...)` and `patchWidget(...)` and `renderWidget(...)` flow, relies on the `Current Space Widgets` and `Current Widget` transient sections, and points complex current-space widget logic at `context.import("scripts/...")` for shared state, cross-widget communication, and large widget splits.
 
 Current first-party panel helper exports include:
 

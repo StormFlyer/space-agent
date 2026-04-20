@@ -84,6 +84,7 @@ Current public shell assets:
 - keeps the footer social links as navigation-only outbound targets to the Space Agent repository, Discord community, Agent Zero website, and X account
 - keeps the mobile shell scrollable when the viewport is shorter than the content, and reserves extra small-screen side spacing for the intro column rather than inflating the login card
 - keeps the mirrored canvas gradient and star or glow backdrop pinned to fixed viewport layers while the login shell content scrolls
+- keeps the public-shell glass shadowless: no painted box-shadow, text-shadow, or drop-shadow treatments on first-party shell chrome, astronaut art, or footer icons
 - keeps login-specific styling and motion local
 
 `share_space.html`:
@@ -91,11 +92,14 @@ Current public shell assets:
 - is public and exists only to unwrap one hosted share into a fresh guest account
 - must not depend on authenticated `/mod/...` assets
 - reuses the mirrored public backdrop assets from `server/pages/res/space-backdrop.*`
+- should use the same `space-theme-canvas` backdrop contract as `/login` and `/enter` so the shared gradient and starfield background stay visually consistent across public shells
 - declares the `Shared Space | Space Agent` document title plus the shared favicon family
 - reads the share token from the multi-segment `/share/space/<token>` route, checks whether the stored share metadata declares browser-side password protection, downloads the hosted ZIP, decrypts that ZIP in the browser through `server/pages/res/share-crypto.js` when needed, previews the shared space title plus optional thumbnail plus widget-name pills from inside the archive, and only then posts the clear ZIP bytes to `/api/cloud_share_clone`
 - should keep the preview explicit and user-readable instead of auto-cloning blindly, using the shared-space title when present and falling back gracefully when preview fields are missing
-- should keep the copy explicit that shared code opens only inside a temporary guest account and never inside the visitor's existing user folder
-- should grant the same-tab launcher-access marker before navigating into the cloned guest session so successful public share opens land directly in the imported guest space instead of bouncing back through `/enter`
+- should keep the copy explicit and short: shared spaces open in a sandboxed guest environment instead of the visitor's own account
+- should keep password UI hidden unless the hosted share metadata declares browser-side encryption, and when a password is required it should use plain continue or show-space wording instead of preview-only jargon
+- should clear idle status text once the preview is ready so the steady state is just the preview plus the next real action
+- should wait for the new guest session to become visible through `login_check` before navigating, then grant the same-tab launcher-access marker so successful public share opens land directly in the imported guest space instead of bouncing back through `/enter` or `/login`
 - should surface clone failures in place instead of redirecting into half-initialized guest sessions
 
 `enter.html`:
@@ -112,6 +116,7 @@ Current public shell assets:
 - keeps the footer social links as navigation-only outbound targets to the Space Agent repository, Discord community, Agent Zero website, and X account
 - keeps extra small-screen side spacing around the launcher shell and a generous top and inter-button gap when the launcher actions collapse below the intro copy
 - should reuse the mirrored public backdrop assets instead of introducing a second standalone visual system
+- `/login` and `/enter` launcher actions plus public footer links must keep a stable clickable hitbox on hover and focus; use opacity, border, background, or outline changes instead of translate-based lift
 
 ## Root Discovery File Contracts
 

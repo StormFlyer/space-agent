@@ -1,9 +1,22 @@
 import * as config from "/mod/_core/onscreen_agent/config.js";
+import {
+  buildPromptLongMessagePlaceholder,
+  buildPromptOverflowTrimPlan,
+  comparePromptTrimCandidates,
+  estimatePromptCharsForTokenRemoval,
+  listPromptItems,
+  mergePromptItemMaps,
+  normalizePromptBudgetRatios,
+  normalizePromptItemDefinition,
+  normalizePromptItemMap,
+  trimPromptLongMessage
+} from "/mod/_core/agent_prompt/prompt-items.js";
 import { createAgentPromptInstance } from "/mod/_core/agent_prompt/prompt-runtime.js";
 import { buildMessagePromptParts, MESSAGE_PROMPT_PART_BLOCK } from "/mod/_core/onscreen_agent/attachments.js";
 import * as llmParams from "/mod/_core/onscreen_agent/llm-params.js";
 import * as skills from "/mod/_core/onscreen_agent/skills.js";
 import { mergeConsecutiveChatMessages } from "/mod/_core/framework/js/chat-messages.js";
+import { countTextTokens } from "/mod/_core/framework/js/token-count.js";
 import * as proxyUrl from "/mod/_core/framework/js/proxy-url.js";
 
 export const DEFAULT_ONSCREEN_AGENT_SYSTEM_PROMPT_PATH = "/mod/_core/onscreen_agent/prompts/system-prompt.md";
@@ -28,6 +41,29 @@ const ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE = Object.freeze({
   TRANSIENT: "transient"
 });
 const ONSCREEN_AGENT_EXAMPLE_RESET_TEXT = "start of new conversation - don't refer to previous contents";
+const MIN_PROMPT_PART_TRIM_TOKENS = 250;
+const ONSCREEN_AGENT_SYSTEM_ITEM_KEY = Object.freeze({
+  AUTO_LOADED_SKILLS: "onscreen:system:auto-loaded-skills",
+  BASE: "onscreen:system:base",
+  CUSTOM: "onscreen:system:custom-instructions",
+  LOADED_SKILLS: "onscreen:system:loaded-skills",
+  SKILLS: "onscreen:system:skills"
+});
+const ONSCREEN_AGENT_SYSTEM_ITEM_ORDER = Object.freeze({
+  AUTO_LOADED_SKILLS: 310,
+  BASE: 0,
+  CUSTOM_AFTER_BASE: 20,
+  CUSTOM_END: 900,
+  LOADED_SKILLS: 320,
+  SKILLS: 300
+});
+const ONSCREEN_AGENT_SYSTEM_ITEM_TRIM_PRIORITY = Object.freeze({
+  AUTO_LOADED_SKILLS: 20,
+  CUSTOM: 5,
+  LOADED_SKILLS: 20,
+  SKILLS: 10
+});
+const ONSCREEN_AGENT_TRANSIENT_ITEM_PREFIX = "onscreen:transient";
 
 let defaultSystemPromptPromise = null;
 const compactPromptPromises = {
@@ -86,6 +122,86 @@ function normalizePromptSections(sections) {
     .filter(Boolean);
 }
 
+function formatPromptSourcePath(sourcePath = "") {
+  const normalizedPath = String(sourcePath || "")
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/^\/+/, "");
+
+  return normalizedPath ? `/${normalizedPath}` : "";
+}
+
+function renderSystemPromptItem(item = {}) {
+  const value = typeof item?.value === "string" ? item.value : "";
+
+  if (!value.trim()) {
+    return "";
+  }
+
+  const sourcePath = formatPromptSourcePath(item.sourcePath);
+
+  if (!sourcePath) {
+    return value;
+  }
+
+  return [
+    `source: ${sourcePath}`,
+    value
+  ].join("\n");
+}
+
+function renderSystemPromptItems(items = {}) {
+  return listPromptItems(items)
+    .map((item) => renderSystemPromptItem(item))
+    .filter((item) => item.trim());
+}
+
+function createSystemPromptItem(key, value, options = {}) {
+  return normalizePromptItemDefinition(key, {
+    ...options,
+    value
+  });
+}
+
+function buildBaseSystemPromptItems(context = {}) {
+  const items = Object.create(null);
+  const customPromptPlacement = resolveCustomPromptPlacement(context.options);
+  const customPromptOrder =
+    customPromptPlacement === "end"
+      ? ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.CUSTOM_END
+      : ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.CUSTOM_AFTER_BASE;
+  const systemItems = [
+    createSystemPromptItem(ONSCREEN_AGENT_SYSTEM_ITEM_KEY.BASE, context.basePrompt, {
+      order: ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.BASE,
+      trimAllowed: false
+    }),
+    createSystemPromptItem(ONSCREEN_AGENT_SYSTEM_ITEM_KEY.CUSTOM, context.customPrompt, {
+      order: customPromptOrder,
+      trimPriority: ONSCREEN_AGENT_SYSTEM_ITEM_TRIM_PRIORITY.CUSTOM
+    }),
+    createSystemPromptItem(ONSCREEN_AGENT_SYSTEM_ITEM_KEY.SKILLS, context.skillsSection, {
+      order: ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.SKILLS,
+      trimPriority: ONSCREEN_AGENT_SYSTEM_ITEM_TRIM_PRIORITY.SKILLS
+    }),
+    createSystemPromptItem(ONSCREEN_AGENT_SYSTEM_ITEM_KEY.AUTO_LOADED_SKILLS, context.autoLoadedSkillsSection, {
+      order: ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.AUTO_LOADED_SKILLS,
+      trimPriority: ONSCREEN_AGENT_SYSTEM_ITEM_TRIM_PRIORITY.AUTO_LOADED_SKILLS
+    }),
+    createSystemPromptItem(ONSCREEN_AGENT_SYSTEM_ITEM_KEY.LOADED_SKILLS, context.loadedSkillsSection, {
+      order: ONSCREEN_AGENT_SYSTEM_ITEM_ORDER.LOADED_SKILLS,
+      trimPriority: ONSCREEN_AGENT_SYSTEM_ITEM_TRIM_PRIORITY.LOADED_SKILLS
+    })
+  ];
+
+  systemItems.filter(Boolean).forEach((item) => {
+    items[item.key] = {
+      ...item
+    };
+  });
+
+  return items;
+}
+
 async function loadPromptFile(promptPath, promptLabel) {
   const response = await fetch(promptPath);
 
@@ -127,12 +243,22 @@ function normalizeConversationMessage(message) {
     return null;
   }
 
+  const content = typeof message.content === "string" ? message.content : "";
+  const tokenCount = Number.isFinite(Number(message?.tokenCount))
+    ? Math.max(0, Math.floor(Number(message.tokenCount)))
+    : countTextTokens(content);
+
+  if (message && typeof message === "object" && !Array.isArray(message) && !Number.isFinite(Number(message?.tokenCount))) {
+    message.tokenCount = tokenCount;
+  }
+
   return {
     attachments: Array.isArray(message?.attachments) ? message.attachments : [],
-    content: typeof message.content === "string" ? message.content : "",
+    content,
     id: typeof message?.id === "string" ? message.id : "",
     kind: typeof message?.kind === "string" ? message.kind.trim() : "",
-    role: message.role
+    role: message.role,
+    tokenCount
   };
 }
 
@@ -176,7 +302,10 @@ function createPreparedPromptEntry(role, content, options = {}) {
     kind: typeof options?.kind === "string" ? options.kind.trim() : "",
     messageId: typeof options?.messageId === "string" ? options.messageId : "",
     role: normalizedRole,
-    source: normalizePromptMessageSource(options?.source)
+    source: normalizePromptMessageSource(options?.source),
+    tokenCount: Number.isFinite(Number(options?.tokenCount))
+      ? Math.max(0, Math.floor(Number(options.tokenCount)))
+      : countTextTokens(normalizedContent)
   };
 }
 
@@ -195,7 +324,8 @@ function clonePreparedPromptEntries(entries) {
 function createPromptMessagesFromEntries(entries) {
   return clonePreparedPromptEntries(entries).map((entry) => ({
     content: entry.content,
-    role: entry.role
+    role: entry.role,
+    tokenCount: Number.isFinite(Number(entry?.tokenCount)) ? Math.max(0, Math.floor(Number(entry.tokenCount))) : 0
   }));
 }
 
@@ -319,19 +449,90 @@ function normalizeTransientSections(sections) {
     });
 }
 
-function collectRuntimeTransientSections(context = {}) {
+function createTransientPromptItem(section = {}, fallbackKey = "") {
+  const normalizedSection = normalizeTransientSection(section, fallbackKey);
+
+  if (!normalizedSection) {
+    return null;
+  }
+
+  return normalizePromptItemDefinition(normalizedSection.key, {
+    heading: normalizedSection.heading,
+    key: normalizedSection.key,
+    order: normalizedSection.order,
+    trimPriority: Number.isFinite(section?.trimPriority) ? Number(section.trimPriority) : 0,
+    value: normalizedSection.content
+  });
+}
+
+function normalizeTransientItems(items = {}) {
+  return normalizePromptItemMap(items, {
+    fromArray(entry, index) {
+      return createTransientPromptItem(entry, `${ONSCREEN_AGENT_TRANSIENT_ITEM_PREFIX}:${index + 1}`);
+    },
+    keyPrefix: ONSCREEN_AGENT_TRANSIENT_ITEM_PREFIX
+  });
+}
+
+function listTransientPromptSections(items = {}) {
+  return listPromptItems(normalizeTransientItems(items))
+    .map((item) => {
+      const content = typeof item?.value === "string" ? item.value : "";
+      const headingSource = item?.heading ?? item?.title ?? item?.label ?? item?.key;
+      const heading = typeof headingSource === "string" ? headingSource.trim() : "";
+
+      if (!content.trim()) {
+        return null;
+      }
+
+      return {
+        content,
+        heading: heading || item.key,
+        key: item.key,
+        order: Number.isFinite(item?.order) ? Number(item.order) : 0,
+        trimmed: item?.trimmed === true,
+        removedChars: Number.isFinite(item?.removedChars) ? Number(item.removedChars) : 0
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderTransientPromptItem(item = {}) {
+  const value = typeof item?.value === "string" ? item.value : "";
+  const headingSource = item?.heading ?? item?.title ?? item?.label ?? item?.key;
+  const heading = typeof headingSource === "string" ? headingSource.trim() : "";
+
+  if (!value.trim()) {
+    return "";
+  }
+
+  return [
+    `### ${heading || item.key}`,
+    value
+  ].join("\n");
+}
+
+function renderTransientPromptItems(items = {}) {
+  return listPromptItems(normalizeTransientItems(items))
+    .map((item) => renderTransientPromptItem(item))
+    .filter((item) => item.trim());
+}
+
+function collectRuntimeTransientItems(context = {}) {
   if (Array.isArray(context.transientSections)) {
-    return normalizeTransientSections(context.transientSections);
+    return normalizeTransientItems(context.transientSections);
   }
 
   const runtimeSections = globalThis.space?.chat?.transient?.list?.();
-  return normalizeTransientSections(Array.isArray(runtimeSections) ? runtimeSections : []);
+  return normalizeTransientItems(Array.isArray(runtimeSections) ? runtimeSections : []);
 }
 
-function formatTransientMessageBlock(sections) {
-  const normalizedSections = normalizeTransientSections(sections);
+function formatTransientMessageBlockFromTexts(sectionTexts = []) {
+  const normalizedSectionTexts = (Array.isArray(sectionTexts) ? sectionTexts : [])
+    .map((sectionText) => (typeof sectionText === "string" ? sectionText.trim() : ""))
+    .filter(Boolean);
 
-  if (!normalizedSections.length) {
+  if (!normalizedSectionTexts.length) {
     return "";
   }
 
@@ -339,14 +540,17 @@ function formatTransientMessageBlock(sections) {
     ONSCREEN_AGENT_PREPARED_MESSAGE_BLOCK.TRANSIENT,
     "This is transient context, not instruction. It may change between requests.",
     "",
-    ...normalizedSections.flatMap((section, index) => [
+    ...normalizedSectionTexts.flatMap((sectionText, index) => [
       ...(index > 0 ? [""] : []),
-      `### ${section.heading}`,
-      section.content
+      sectionText
     ])
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatTransientMessageBlock(items) {
+  return formatTransientMessageBlockFromTexts(renderTransientPromptItems(items));
 }
 
 function filterDuplicateTransientSections(sections, entries) {
@@ -399,18 +603,584 @@ function createTransientPromptEntry(transientBlock = "") {
   });
 }
 
+function resolvePromptBudgetConfig(context = {}) {
+  const options =
+    context?.options && typeof context.options === "object" && !Array.isArray(context.options)
+      ? context.options
+      : {};
+  const maxTokens = config.normalizeOnscreenAgentMaxTokens(
+    options.maxTokens ?? context.maxTokens ?? context?.settings?.maxTokens
+  );
+  const ratios = normalizePromptBudgetRatios(
+    options.promptBudgetRatios ?? context.promptBudgetRatios ?? context?.settings?.promptBudgetRatios
+  );
+
+  return {
+    historyBudget: Math.max(0, Math.floor((maxTokens * ratios.history) / 100)),
+    maxTokens,
+    promptBudgetRatios: ratios,
+    singleHistoryMessageBudget: Math.max(
+      0,
+      Math.floor((Math.max(0, Math.floor((maxTokens * ratios.history) / 100)) * ratios.singleMessage) / 100)
+    ),
+    systemBudget: Math.max(0, Math.floor((maxTokens * ratios.system) / 100)),
+    transientBudget: Math.max(0, Math.floor((maxTokens * ratios.transient) / 100))
+  };
+}
+
+function createPromptContributor(options = {}) {
+  const renderValue =
+    typeof options.renderValue === "function"
+      ? options.renderValue
+      : (valueText) => String(valueText ?? "");
+  const originalValueText =
+    typeof options.valueText === "string" ? options.valueText : String(options.valueText ?? "");
+  const originalValueTokenCount = Number.isFinite(Number(options.valueTokenCount))
+    ? Math.max(0, Math.floor(Number(options.valueTokenCount)))
+    : countTextTokens(originalValueText);
+  const contributor = {
+    blockType: typeof options.blockType === "string" ? options.blockType.trim() : "",
+    currentText: "",
+    currentValueText: originalValueText,
+    exhausted: false,
+    fullText: "",
+    heading: typeof options.heading === "string" ? options.heading.trim() : "",
+    id: 0,
+    key: typeof options.key === "string" ? options.key.trim() : "",
+    messageId: typeof options.messageId === "string" ? options.messageId : "",
+    minimumVisibleChars: Number.isFinite(Number(options.minimumVisibleChars))
+      ? Math.max(24, Math.round(Number(options.minimumVisibleChars)))
+      : 48,
+    order: Number.isFinite(Number(options.order)) ? Number(options.order) : 0,
+    originalValueTokenCount,
+    originalValueText,
+    part: typeof options.part === "string" ? options.part.trim() : "",
+    removedChars: 0,
+    renderValue,
+    role: typeof options.role === "string" ? options.role.trim() : "",
+    source: typeof options.source === "string" ? options.source.trim() : "",
+    sourcePath: typeof options.sourcePath === "string" ? options.sourcePath.trim() : "",
+    tokenCount: 0,
+    trimAllowed: options.trimAllowed !== false && Boolean(originalValueText.trim()),
+    trimmed: false,
+    trimPriority: Number.isFinite(Number(options.trimPriority)) ? Number(options.trimPriority) : 0,
+    valueTokenCount: 0
+  };
+
+  contributor.fullText = renderValue(originalValueText);
+  contributor.currentText = contributor.fullText;
+  contributor.valueTokenCount = originalValueTokenCount;
+  contributor.tokenCount = Number.isFinite(Number(options.tokenCount))
+    ? Math.max(0, Math.floor(Number(options.tokenCount)))
+    : countTextTokens(contributor.currentText);
+  return contributor;
+}
+
+function clonePromptContributorPromptEntry(entry, contributor) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  return {
+    ...entry,
+    content: contributor?.currentText || entry.content,
+    promptItemId: Number.isFinite(Number(contributor?.id)) ? Number(contributor.id) : 0,
+    removedChars: Number.isFinite(Number(contributor?.removedChars)) ? Number(contributor.removedChars) : 0,
+    tokenCount: Number.isFinite(Number(contributor?.tokenCount))
+      ? Math.max(0, Math.floor(Number(contributor.tokenCount)))
+      : Number.isFinite(Number(entry?.tokenCount))
+        ? Math.max(0, Math.floor(Number(entry.tokenCount)))
+        : 0,
+    trimmed: contributor?.trimmed === true
+  };
+}
+
+function canTrimPromptContributor(contributor) {
+  return Boolean(
+    contributor &&
+      contributor.trimAllowed !== false &&
+      typeof contributor.originalValueText === "string" &&
+      contributor.originalValueText.trim() &&
+      contributor.exhausted !== true
+  );
+}
+
+function trimPromptContributorByOverflow(contributor, overflowTokens) {
+  if (!canTrimPromptContributor(contributor)) {
+    return false;
+  }
+
+  const normalizedOverflowTokens = Number.isFinite(Number(overflowTokens))
+    ? Math.max(1, Math.ceil(Number(overflowTokens)))
+    : 1;
+  const currentTokenCount = Math.max(0, contributor.tokenCount);
+  const targetTokenCount = Math.max(0, currentTokenCount - normalizedOverflowTokens);
+  const originalValueTokenCount = Math.max(1, contributor.originalValueTokenCount);
+  const estimatedRemovedChars = contributor.removedChars + estimatePromptCharsForTokenRemoval(
+    contributor.originalValueText,
+    normalizedOverflowTokens,
+    {
+      tokenCount: originalValueTokenCount
+    }
+  );
+  const placeholderTokenCount = countTextTokens(
+    buildPromptLongMessagePlaceholder({
+      id: contributor.id,
+      removedChars: estimatedRemovedChars
+    })
+  );
+  const nextRemovedChars = contributor.removedChars + estimatePromptCharsForTokenRemoval(
+    contributor.originalValueText,
+    normalizedOverflowTokens + placeholderTokenCount,
+    {
+      tokenCount: originalValueTokenCount
+    }
+  );
+  let trimmedValue = trimPromptLongMessage(contributor.originalValueText, {
+    id: contributor.id,
+    minimumVisibleChars: contributor.minimumVisibleChars,
+    removeChars: nextRemovedChars
+  });
+  let trimmedValueTokenCount = countTextTokens(trimmedValue.text);
+
+  if (trimmedValueTokenCount > targetTokenCount) {
+    const additionalOverflowTokens = trimmedValueTokenCount - targetTokenCount;
+    const recalibratedRemovedChars = trimmedValue.removedChars + estimatePromptCharsForTokenRemoval(
+      contributor.originalValueText,
+      additionalOverflowTokens,
+      {
+        tokenCount: originalValueTokenCount
+      }
+    );
+
+    trimmedValue = trimPromptLongMessage(contributor.originalValueText, {
+      id: contributor.id,
+      minimumVisibleChars: contributor.minimumVisibleChars,
+      removeChars: recalibratedRemovedChars
+    });
+    trimmedValueTokenCount = countTextTokens(trimmedValue.text);
+  }
+
+  if (trimmedValue.removedChars <= contributor.removedChars) {
+    contributor.exhausted = true;
+    return false;
+  }
+
+  contributor.currentValueText = trimmedValue.text;
+  contributor.removedChars = trimmedValue.removedChars;
+  contributor.trimmed = contributor.removedChars > 0;
+  contributor.currentText = contributor.renderValue(contributor.currentValueText);
+  contributor.valueTokenCount = trimmedValueTokenCount;
+  contributor.tokenCount =
+    contributor.currentText === contributor.currentValueText
+      ? trimmedValueTokenCount
+      : countTextTokens(contributor.currentText);
+  return true;
+}
+
+function trimPromptContributorToTokenLimit(contributor, tokenLimit) {
+  const normalizedTokenLimit = Number.isFinite(Number(tokenLimit))
+    ? Math.max(0, Math.floor(Number(tokenLimit)))
+    : 0;
+
+  if (contributor.tokenCount > normalizedTokenLimit) {
+    trimPromptContributorByOverflow(
+      contributor,
+      contributor.tokenCount - normalizedTokenLimit
+    );
+  }
+
+  return contributor;
+}
+
+function countSystemPromptTokensFromContributors(contributors = []) {
+  return countTextTokens(
+    (Array.isArray(contributors) ? contributors : [])
+      .map((contributor) => contributor?.currentText || "")
+      .filter((entry) => entry.trim())
+      .join("\n\n")
+  );
+}
+
+function countHistoryPromptTokensFromContributors(contributors = []) {
+  return countTextTokens(
+    (Array.isArray(contributors) ? contributors : [])
+      .map((contributor) => contributor?.currentText || "")
+      .filter((entry) => entry.trim())
+      .join("\n\n")
+  );
+}
+
+function countTransientPromptTokensFromContributors(contributors = []) {
+  return countTextTokens(
+    formatTransientMessageBlockFromTexts(
+      (Array.isArray(contributors) ? contributors : [])
+        .map((contributor) => contributor?.currentText || "")
+        .filter((entry) => entry.trim())
+    )
+  );
+}
+
+function buildPromptPartCombinedText(contributors = []) {
+  return (Array.isArray(contributors) ? contributors : [])
+    .map((contributor) => contributor?.currentText || "")
+    .filter((entry) => entry.trim())
+    .join("\n\n");
+}
+
+function createPromptPartSectionContributor(part, contributors = [], options = {}) {
+  const bodyText = buildPromptPartCombinedText(contributors);
+
+  if (!bodyText.trim()) {
+    return null;
+  }
+
+  const contributor = createPromptContributor({
+    heading: typeof options.heading === "string" ? options.heading.trim() : `${part} body`,
+    key: typeof options.key === "string" ? options.key.trim() : `${part}:body`,
+    minimumVisibleChars: Number.isFinite(Number(options.minimumVisibleChars))
+      ? Math.max(24, Math.round(Number(options.minimumVisibleChars)))
+      : part === "system"
+        ? 96
+        : 72,
+    order: Number.isFinite(Number(options.order)) ? Number(options.order) : -1,
+    part,
+    renderValue: (valueText) => valueText,
+    trimAllowed: true,
+    trimPriority: Number.isFinite(Number(options.trimPriority)) ? Number(options.trimPriority) : 100,
+    valueText: bodyText,
+    valueTokenCount: countTextTokens(bodyText)
+  });
+
+  contributor.id = Number.isFinite(Number(options.id)) ? Math.max(1, Math.floor(Number(options.id))) : 0;
+  return contributor;
+}
+
+function buildPromptPartTrimPlan({
+  budgetTokens,
+  contributors = [],
+  countTokens,
+  part,
+  sectionPromptItemId
+} = {}) {
+  const normalizedBudgetTokens = Number.isFinite(Number(budgetTokens))
+    ? Math.max(0, Math.floor(Number(budgetTokens)))
+    : 0;
+  const totalTokens = countTokens(contributors);
+  const overflowTokens = Math.max(0, totalTokens - normalizedBudgetTokens);
+  const itemPlan = buildPromptOverflowTrimPlan(
+    [...(Array.isArray(contributors) ? contributors : [])]
+      .filter((contributor) => canTrimPromptContributor(contributor))
+      .sort(comparePromptTrimCandidates),
+    overflowTokens,
+    {
+      minimumStepTokens: MIN_PROMPT_PART_TRIM_TOKENS
+    }
+  );
+  let sectionContributor = null;
+  let plan = {
+    mode: "none",
+    totalTokens
+  };
+
+  if (overflowTokens <= 0) {
+    return plan;
+  }
+
+  if (Array.isArray(itemPlan?.steps) && itemPlan.steps.length) {
+    return {
+      ...itemPlan,
+      mode: "contributors",
+      totalTokens
+    };
+  }
+
+  if (part === "system" || part === "transient") {
+    sectionContributor = createPromptPartSectionContributor(part, contributors, {
+      heading: part === "system" ? "system prompt" : "transient context",
+      id: sectionPromptItemId
+    });
+
+    if (sectionContributor && canTrimPromptContributor(sectionContributor)) {
+      return {
+        mode: "section",
+        overflowTokens,
+        sectionContributor,
+        totalTokens
+      };
+    }
+  }
+
+  return plan;
+}
+
+function applyPromptPartBudget({
+  budgetTokens,
+  contributors = [],
+  countTokens,
+  part,
+  sectionPromptItemId
+} = {}) {
+  const plan = buildPromptPartTrimPlan({
+    budgetTokens,
+    contributors,
+    countTokens,
+    part,
+    sectionPromptItemId
+  });
+
+  if (plan.mode === "contributors") {
+    const didTrim = plan.steps.reduce(
+      (trimmed, step) => trimPromptContributorByOverflow(step.contributor, step.removeTokens) || trimmed,
+      false
+    );
+
+    return {
+      mode: didTrim ? "contributors" : "none",
+      totalTokens: didTrim ? countTokens(contributors) : plan.totalTokens
+    };
+  }
+
+  if (plan.mode === "section" && plan.sectionContributor) {
+    const didTrim = trimPromptContributorByOverflow(plan.sectionContributor, plan.overflowTokens);
+
+    return {
+      mode: didTrim ? "section" : "none",
+      sectionContributor: didTrim ? plan.sectionContributor : null,
+      totalTokens: didTrim ? countTextTokens(plan.sectionContributor.currentText) : plan.totalTokens
+    };
+  }
+
+  return {
+    mode: "none",
+    totalTokens: plan.totalTokens
+  };
+}
+
+function createPromptAccessEntry(contributor) {
+  if (!contributor || typeof contributor !== "object") {
+    return null;
+  }
+
+  return {
+    blockType: contributor.blockType,
+    content: contributor.currentText,
+    fullText: contributor.fullText,
+    heading: contributor.heading,
+    id: contributor.id,
+    key: contributor.key,
+    messageId: contributor.messageId,
+    order: contributor.order,
+    part: contributor.part,
+    removedChars: contributor.removedChars,
+    role: contributor.role,
+    source: contributor.source,
+    sourcePath: contributor.sourcePath,
+    tokens: contributor.tokenCount,
+    trimmed: contributor.trimmed === true
+  };
+}
+
+function buildPromptInputWithBudgets({
+  budgetConfig,
+  exampleEntries = [],
+  historyEntries = [],
+  systemItems = {},
+  transientItems = {}
+} = {}) {
+  const systemContributors = listPromptItems(systemItems)
+    .map((item) =>
+      createPromptContributor({
+        heading: typeof item?.heading === "string" ? item.heading.trim() : "",
+        key: item?.key,
+        minimumVisibleChars: 96,
+        order: item?.order,
+        part: "system",
+        renderValue: (valueText) =>
+          renderSystemPromptItem({
+            ...item,
+            value: valueText
+          }),
+        sourcePath: item?.sourcePath,
+        trimAllowed: item?.trimAllowed !== false,
+        trimPriority: item?.trimPriority,
+        valueText: typeof item?.value === "string" ? item.value : "",
+        valueTokenCount: item?.valueTokenCount
+      })
+    )
+    .filter((contributor) => contributor.currentText.trim());
+  const allHistoryEntries = [
+    ...clonePreparedPromptEntries(exampleEntries),
+    ...clonePreparedPromptEntries(historyEntries)
+  ];
+  const historyContributors = allHistoryEntries.map((entry) =>
+    createPromptContributor({
+      blockType: entry?.blockType,
+      key: entry?.messageId || `${entry?.source || "history"}:${entry?.role || "user"}`,
+      messageId: entry?.messageId,
+      minimumVisibleChars: 72,
+      part: "history",
+      renderValue: (valueText) => valueText,
+      role: entry?.role,
+      source: entry?.source,
+      trimAllowed:
+        entry?.source !== ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.EXAMPLE &&
+        typeof entry?.content === "string" &&
+        entry.content.trim(),
+      trimPriority:
+        entry?.source === ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.HISTORY ||
+        entry?.source === ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.HISTORY_COMPACT
+          ? 20
+          : 0,
+      valueText: typeof entry?.content === "string" ? entry.content : "",
+      valueTokenCount: entry?.tokenCount,
+      tokenCount: entry?.tokenCount
+    })
+  );
+  const transientContributors = listPromptItems(normalizeTransientItems(transientItems))
+    .map((item) =>
+      createPromptContributor({
+        heading: typeof item?.heading === "string" ? item.heading.trim() : "",
+        key: item?.key,
+        minimumVisibleChars: 72,
+        order: item?.order,
+        part: "transient",
+        renderValue: (valueText) =>
+          renderTransientPromptItem({
+            ...item,
+            value: valueText
+          }),
+        sourcePath: item?.sourcePath,
+        trimAllowed: item?.trimAllowed !== false,
+        trimPriority: item?.trimPriority,
+        valueText: typeof item?.value === "string" ? item.value : "",
+        valueTokenCount: item?.valueTokenCount
+      })
+    )
+    .filter((contributor) => contributor.currentText.trim());
+  const orderedContributors = [
+    ...systemContributors,
+    ...historyContributors,
+    ...transientContributors
+  ];
+
+  orderedContributors.forEach((contributor, index) => {
+    contributor.id = index + 1;
+  });
+
+  if (budgetConfig.singleHistoryMessageBudget >= 0) {
+    historyContributors.forEach((contributor) => {
+      if (
+        contributor.source !== ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.HISTORY &&
+        contributor.source !== ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.HISTORY_COMPACT
+      ) {
+        return;
+      }
+
+      trimPromptContributorToTokenLimit(contributor, budgetConfig.singleHistoryMessageBudget);
+    });
+  }
+
+  const systemTrimResult = applyPromptPartBudget({
+    budgetTokens: budgetConfig.systemBudget,
+    contributors: systemContributors,
+    countTokens: countSystemPromptTokensFromContributors,
+    part: "system",
+    sectionPromptItemId: orderedContributors.length + 1
+  });
+  applyPromptPartBudget({
+    budgetTokens: budgetConfig.historyBudget,
+    contributors: historyContributors,
+    countTokens: countHistoryPromptTokensFromContributors,
+    part: "history"
+  });
+  const transientTrimResult = applyPromptPartBudget({
+    budgetTokens: budgetConfig.transientBudget,
+    contributors: transientContributors,
+    countTokens: countTransientPromptTokensFromContributors,
+    part: "transient",
+    sectionPromptItemId: orderedContributors.length + 2
+  });
+
+  const finalSystemContributors =
+    systemTrimResult.mode === "section" && systemTrimResult.sectionContributor
+      ? [systemTrimResult.sectionContributor]
+      : systemContributors;
+  const finalTransientContributors =
+    transientTrimResult.mode === "section" && transientTrimResult.sectionContributor
+      ? [transientTrimResult.sectionContributor]
+      : transientContributors;
+  const promptAccessContributors = [
+    ...finalSystemContributors,
+    ...historyContributors,
+    ...finalTransientContributors
+  ];
+  const systemPromptSections = finalSystemContributors
+    .map((contributor) => contributor.currentText)
+    .filter((entry) => entry.trim());
+  const systemPrompt = systemPromptSections.join("\n\n");
+  const finalHistoryEntries = allHistoryEntries
+    .map((entry, index) => clonePromptContributorPromptEntry(entry, historyContributors[index]))
+    .filter(Boolean);
+  const finalExampleEntries = finalHistoryEntries.filter(
+    (entry) => entry?.source === ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.EXAMPLE
+  );
+  const finalHistoryOnlyEntries = finalHistoryEntries.filter(
+    (entry) => entry?.source !== ONSCREEN_AGENT_PROMPT_MESSAGE_SOURCE.EXAMPLE
+  );
+  const transientBlock = formatTransientMessageBlockFromTexts(
+    finalTransientContributors
+      .map((contributor) => contributor.currentText)
+      .filter((entry) => entry.trim())
+  );
+  const transientEntry = createTransientPromptEntry(transientBlock);
+  const systemEntry = createSystemPromptEntry(systemPrompt);
+  const requestEntries = [systemEntry, ...finalHistoryEntries, transientEntry].filter(Boolean);
+  const promptItems = promptAccessContributors
+    .map((contributor) => createPromptAccessEntry(contributor))
+    .filter(Boolean);
+
+  return {
+    exampleEntries: clonePreparedPromptEntries(finalExampleEntries),
+    exampleMessages: createPromptMessagesFromEntries(finalExampleEntries),
+    historyEntries: clonePreparedPromptEntries(finalHistoryOnlyEntries),
+    historyMessages: createPromptMessagesFromEntries(finalHistoryOnlyEntries),
+    promptItems,
+    requestEntries: clonePreparedPromptEntries(requestEntries),
+    requestMessages: createPromptMessagesFromEntries(requestEntries),
+    systemItems: normalizePromptItemMap(systemItems),
+    systemPrompt,
+    systemPromptSections,
+    transientBlock,
+    transientEntry: clonePreparedPromptEntry(transientEntry),
+    transientItems: normalizeTransientItems(transientItems),
+    transientSections: finalTransientContributors.map((contributor) => ({
+      content: contributor.currentValueText,
+      heading: contributor.heading || contributor.key,
+      key: contributor.key,
+      order: contributor.order,
+      promptItemId: contributor.id,
+      removedChars: contributor.removedChars,
+      trimmed: contributor.trimmed === true
+    }))
+  };
+}
+
 function createEmptyPromptInput() {
   return {
     exampleEntries: [],
     exampleMessages: [],
     historyEntries: [],
     historyMessages: [],
+    promptItems: [],
     requestEntries: [],
     requestMessages: [],
+    systemItems: {},
     systemPrompt: "",
     systemPromptSections: [],
     transientBlock: "",
     transientEntry: null,
+    transientItems: {},
     transientSections: []
   };
 }
@@ -424,12 +1194,17 @@ function clonePromptInput(promptInput) {
     exampleMessages: createPromptMessagesFromEntries(normalizedPromptInput.exampleEntries),
     historyEntries: clonePreparedPromptEntries(normalizedPromptInput.historyEntries),
     historyMessages: createPromptMessagesFromEntries(normalizedPromptInput.historyEntries),
+    promptItems: Array.isArray(normalizedPromptInput.promptItems)
+      ? normalizedPromptInput.promptItems.map((item) => ({ ...item }))
+      : [],
     requestEntries: clonePreparedPromptEntries(normalizedPromptInput.requestEntries),
     requestMessages: createPromptMessagesFromEntries(normalizedPromptInput.requestEntries),
+    systemItems: normalizePromptItemMap(normalizedPromptInput.systemItems),
     systemPrompt: normalizeSystemPrompt(normalizedPromptInput.systemPrompt),
     systemPromptSections: normalizePromptSections(normalizedPromptInput.systemPromptSections),
     transientBlock: typeof normalizedPromptInput.transientBlock === "string" ? normalizedPromptInput.transientBlock : "",
     transientEntry: clonePreparedPromptEntry(normalizedPromptInput.transientEntry),
+    transientItems: normalizeTransientItems(normalizedPromptInput.transientItems),
     transientSections: normalizeTransientSections(normalizedPromptInput.transientSections)
   };
 }
@@ -489,23 +1264,14 @@ export const buildOnscreenAgentSystemPromptSections = globalThis.space.extend(
     const skillPromptContext = await skills.buildOnscreenSkillPromptContext();
     const skillsSection = skillPromptContext.catalogSection;
     const autoLoadedSkillsSection = skillPromptContext.autoLoadedSkillsSection;
-    const customPromptPlacement = resolveCustomPromptPlacement(context.options);
-    const sections =
-      customPromptPlacement === "end"
-        ? [
-            basePrompt,
-            skillsSection,
-            autoLoadedSkillsSection,
-            skillPromptContext.loadedSkillsSection,
-            customPrompt
-          ]
-        : [
-            basePrompt,
-            customPrompt,
-            skillsSection,
-            autoLoadedSkillsSection,
-            skillPromptContext.loadedSkillsSection
-          ];
+    const systemItems = buildBaseSystemPromptItems({
+      autoLoadedSkillsSection,
+      basePrompt,
+      customPrompt,
+      loadedSkillsSection: skillPromptContext.loadedSkillsSection,
+      options: context.options,
+      skillsSection
+    });
 
     return {
       ...context,
@@ -521,7 +1287,8 @@ export const buildOnscreenAgentSystemPromptSections = globalThis.space.extend(
           ? skillPromptContext.loadedTransientSections
           : [])
       ],
-      sections: sections.filter(Boolean),
+      sections: renderSystemPromptItems(systemItems),
+      systemItems,
       skillsSection
     };
   }
@@ -536,7 +1303,7 @@ export const buildRuntimeOnscreenAgentSystemPrompt = globalThis.space.extend(
       systemPrompt
     });
 
-    return normalizePromptSections(promptContext?.sections).join("\n\n");
+    return renderSystemPromptItems(promptContext?.systemItems).join("\n\n");
   }
 );
 
@@ -565,9 +1332,15 @@ export const buildOnscreenAgentHistoryMessages = globalThis.space.extend(
 export const buildOnscreenAgentTransientSections = globalThis.space.extend(
   import.meta,
   async function buildOnscreenAgentTransientSections(context = {}) {
+    const transientItems = mergePromptItemMaps(
+      normalizeTransientItems(context.transientItems),
+      normalizeTransientItems(context.sections)
+    );
+
     return {
       ...context,
-      sections: normalizeTransientSections(context.sections)
+      sections: listTransientPromptSections(transientItems),
+      transientItems
     };
   }
 );
@@ -583,7 +1356,8 @@ export const buildOnscreenAgentPromptInput = globalThis.space.extend(
       systemPrompt: context.systemPrompt
     });
     const historyMessagesForPrompt = Array.isArray(historyMessagesInput) ? historyMessagesInput : [];
-    const runtimeSystemPrompt = normalizePromptSections(systemPromptContext?.sections).join("\n\n");
+    const systemItems = normalizePromptItemMap(systemPromptContext?.systemItems);
+    const runtimeSystemPrompt = renderSystemPromptItems(systemItems).join("\n\n");
     const exampleContext = await buildOnscreenAgentExampleMessages({
       ...context,
       historyMessages: historyMessagesForPrompt,
@@ -611,44 +1385,45 @@ export const buildOnscreenAgentPromptInput = globalThis.space.extend(
         })
       )
       .filter(Boolean);
+    const transientSeedSections = filterDuplicateTransientSections(
+      listTransientPromptSections(
+        mergePromptItemMaps(
+          collectRuntimeTransientItems(context),
+          normalizeTransientItems(
+            Array.isArray(systemPromptContext?.loadedTransientSections)
+              ? systemPromptContext.loadedTransientSections
+              : []
+          )
+        )
+      ),
+      historyEntries
+    );
     const transientContext = await buildOnscreenAgentTransientSections({
       ...context,
       exampleEntries: clonePreparedPromptEntries(exampleEntries),
       historyEntries: clonePreparedPromptEntries(historyEntries),
       requestEntries: [...clonePreparedPromptEntries(exampleEntries), ...clonePreparedPromptEntries(historyEntries)],
-      sections: [
-        ...collectRuntimeTransientSections(context),
-        ...(Array.isArray(systemPromptContext?.loadedTransientSections)
-          ? systemPromptContext.loadedTransientSections
-          : [])
-      ],
+      sections: transientSeedSections,
       runtimeSystemPrompt,
       systemPrompt: runtimeSystemPrompt,
       systemPromptContext
     });
-    const transientSections = filterDuplicateTransientSections(
-      normalizeTransientSections(transientContext?.sections),
-      historyEntries
-    );
-    const transientBlock = formatTransientMessageBlock(transientSections);
-    const transientEntry = createTransientPromptEntry(transientBlock);
-    const systemEntry = createSystemPromptEntry(runtimeSystemPrompt);
-    const requestEntries = [systemEntry, ...exampleEntries, ...historyEntries, transientEntry].filter(Boolean);
+    const transientItems = normalizeTransientItems(transientContext?.transientItems);
+    const budgetConfig = resolvePromptBudgetConfig(context);
+    const builtPromptInput = buildPromptInputWithBudgets({
+      budgetConfig,
+      exampleEntries,
+      historyEntries,
+      systemItems,
+      transientItems
+    });
 
     return {
       ...promptInputContext,
-      exampleEntries: clonePreparedPromptEntries(exampleEntries),
-      exampleMessages: createPromptMessagesFromEntries(exampleEntries),
-      historyEntries: clonePreparedPromptEntries(historyEntries),
-      historyMessages: createPromptMessagesFromEntries(historyEntries),
-      requestEntries: clonePreparedPromptEntries(requestEntries),
-      requestMessages: createPromptMessagesFromEntries(requestEntries),
-      systemPrompt: runtimeSystemPrompt,
       systemPromptContext,
-      systemPromptSections: normalizePromptSections(systemPromptContext?.sections),
-      transientBlock,
-      transientEntry: clonePreparedPromptEntry(transientEntry),
-      transientSections
+      systemItems,
+      transientItems,
+      ...builtPromptInput
     };
   }
 );
@@ -663,6 +1438,9 @@ export const buildOnscreenAgentPromptMessageContext = globalThis.space.extend(
       ...promptMessageContext,
       exampleEntries: clonePreparedPromptEntries(promptInput.exampleEntries),
       historyEntries: clonePreparedPromptEntries(promptInput.historyEntries),
+      promptItems: Array.isArray(promptInput.promptItems)
+        ? promptInput.promptItems.map((item) => ({ ...item }))
+        : [],
       requestEntries: clonePreparedPromptEntries(promptInput.requestEntries),
       requestMessages: createPromptMessagesFromEntries(promptInput.requestEntries),
       systemPrompt: promptInput.systemPrompt,
@@ -671,6 +1449,10 @@ export const buildOnscreenAgentPromptMessageContext = globalThis.space.extend(
     };
   }
 );
+
+export function planOnscreenAgentPromptPartTrim(options = {}) {
+  return buildPromptPartTrimPlan(options);
+}
 
 export async function buildOnscreenAgentPromptMessages(systemPrompt, messages, options = {}) {
   const promptInput = await buildOnscreenAgentPromptInput({
@@ -706,19 +1488,47 @@ async function updateOnscreenAgentPromptHistory({
       })
     )
     .filter(Boolean);
-  const requestEntries = [
-    createSystemPromptEntry(promptInput.systemPrompt),
-    ...clonePreparedPromptEntries(promptInput.exampleEntries),
-    ...clonePreparedPromptEntries(historyEntries),
-    clonePreparedPromptEntry(promptInput.transientEntry)
-  ].filter(Boolean);
+  const transientSeedSections = filterDuplicateTransientSections(
+    listTransientPromptSections(
+      mergePromptItemMaps(
+        collectRuntimeTransientItems(context),
+        normalizeTransientItems(
+          Array.isArray(promptInput?.systemPromptContext?.loadedTransientSections)
+            ? promptInput.systemPromptContext.loadedTransientSections
+            : []
+        )
+      )
+    ),
+    historyEntries
+  );
+  const transientContext = await buildOnscreenAgentTransientSections({
+    ...context,
+    exampleEntries: clonePreparedPromptEntries(promptInput.exampleEntries),
+    historyEntries: clonePreparedPromptEntries(historyEntries),
+    requestEntries: [
+      ...clonePreparedPromptEntries(promptInput.exampleEntries),
+      ...clonePreparedPromptEntries(historyEntries)
+    ],
+    sections: transientSeedSections,
+    runtimeSystemPrompt: promptInput.systemPrompt,
+    systemPrompt: promptInput.systemPrompt,
+    systemPromptContext: promptInput.systemPromptContext
+  });
+  const budgetConfig = resolvePromptBudgetConfig(context);
+  const rebuiltPromptInput = buildPromptInputWithBudgets({
+    budgetConfig,
+    exampleEntries: promptInput.exampleEntries,
+    historyEntries,
+    systemItems: normalizePromptItemMap(
+      promptInput?.systemItems || promptInput?.systemPromptContext?.systemItems
+    ),
+    transientItems: normalizeTransientItems(transientContext?.transientItems)
+  });
 
   return {
     ...promptInput,
-    historyEntries: clonePreparedPromptEntries(historyEntries),
-    historyMessages: createPromptMessagesFromEntries(historyEntries),
-    requestEntries: clonePreparedPromptEntries(requestEntries),
-    requestMessages: createPromptMessagesFromEntries(requestEntries)
+    transientItems: normalizeTransientItems(transientContext?.transientItems),
+    ...rebuiltPromptInput
   };
 }
 
