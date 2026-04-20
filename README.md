@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://space-agent.ai"><img src="./.github/readme-banner-thin.webp" alt="Space Agent banner" /></a>
+  <a href="https://space-agent.ai"><img src="./.github/readme-banner-thin.svg" alt="Space Agent banner" /></a>
 </p>
 
 <p align="center">
